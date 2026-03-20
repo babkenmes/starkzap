@@ -115,10 +115,7 @@ export class TongoConfidential implements ConfidentialProvider {
       sender: details.sender,
       ...(details.feeTo !== undefined && { fee_to_sender: details.feeTo }),
     });
-    const calls: Call[] = [];
-    if (op.approve) calls.push(op.approve);
-    calls.push(op.toCalldata());
-    return calls;
+    return op.approve ? [op.approve, op.toCalldata()] : [op.toCalldata()];
   }
 
   /**

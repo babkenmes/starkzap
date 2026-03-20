@@ -19,8 +19,8 @@ import type {
   PreflightResult,
   Token,
 } from "@/types";
-import type { ConfidentialProvider } from "@/confidential";
 import type {
+  ConfidentialProvider,
   ConfidentialFundDetails,
   ConfidentialTransferDetails,
   ConfidentialWithdrawDetails,
@@ -144,10 +144,6 @@ export class TxBuilder {
     );
   }
 
-  // ============================================================
-  // State accessors
-  // ============================================================
-
   /**
    * The number of pending operations in the builder.
    *
@@ -171,10 +167,6 @@ export class TxBuilder {
   get isSent(): boolean {
     return this.sent;
   }
-
-  // ============================================================
-  // Raw calls
-  // ============================================================
 
   /**
    * Add one or more raw contract calls to the transaction.
@@ -200,10 +192,6 @@ export class TxBuilder {
     this.pending.push(calls);
     return this;
   }
-
-  // ============================================================
-  // ERC20 operations
-  // ============================================================
 
   /**
    * Approve an address to spend ERC20 tokens on behalf of the wallet.
@@ -353,10 +341,6 @@ export class TxBuilder {
       this.wallet.dca().prepareCancel(request)
     );
   }
-
-  // ============================================================
-  // Staking operations
-  // ============================================================
 
   /**
    * Stake tokens in a delegation pool, automatically choosing the right
@@ -530,10 +514,6 @@ export class TxBuilder {
     return this;
   }
 
-  // ============================================================
-  // Confidential operations
-  // ============================================================
-
   /**
    * Fund a confidential account.
    *
@@ -612,10 +592,6 @@ export class TxBuilder {
     this.queueAsyncCalls(confidential.withdraw(details));
     return this;
   }
-
-  // ============================================================
-  // Terminal operations
-  // ============================================================
 
   /**
    * Resolve all pending operations into a flat array of Calls without executing.
@@ -723,7 +699,9 @@ export class TxBuilder {
       throw new Error("This transaction is currently being sent.");
     }
 
-    this.sendPromise = (async () => {
+    // Set the marker synchronously before any async work to prevent
+    // concurrent send() calls from passing the guard in the same microtask.
+    const promise = (async () => {
       const calls = await this.calls();
       if (calls.length === 0) {
         throw new Error(
@@ -735,9 +713,10 @@ export class TxBuilder {
       this.sent = true;
       return tx;
     })();
+    this.sendPromise = promise;
 
     try {
-      return await this.sendPromise;
+      return await promise;
     } finally {
       this.sendPromise = null;
     }

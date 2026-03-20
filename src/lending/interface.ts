@@ -13,32 +13,46 @@ import type { Tx } from "@/tx";
 export type LendingAction = "deposit" | "withdraw" | "borrow" | "repay";
 export type LendingAmountDenomination = "assets" | "native";
 
+export interface LendingMarketStats {
+  supplyApy?: Amount;
+  borrowApr?: Amount;
+  totalSupplied?: Amount;
+  totalBorrowed?: Amount;
+  utilization?: Amount;
+}
+
 export interface LendingMarket {
   protocol: string;
   poolAddress: Address;
+  poolName?: string;
   asset: Token;
   vTokenAddress: Address;
   vTokenSymbol?: string;
   canBeBorrowed?: boolean;
+  stats?: LendingMarketStats;
 }
 
 export interface LendingPosition {
+  /** Collateral share balance as a protocol-native integer quantity. */
   collateralShares: bigint;
+  /** Debt principal in the provider's native integer accounting units. */
   nominalDebt: bigint;
   /** Collateral amount in collateral asset base units. */
   collateralAmount?: bigint;
   /** Debt amount in debt asset base units. */
   debtAmount?: bigint;
-  /** Collateral USD value from protocol collateralization check [SCALE]. */
+  /** Collateral USD value on a 1e18 scale (for example, $1 = 1_000000000000000000n). */
   collateralValue: bigint;
-  /** Debt USD value from protocol collateralization check [SCALE]. */
+  /** Debt USD value on a 1e18 scale (for example, $1 = 1_000000000000000000n). */
   debtValue: bigint;
   isCollateralized: boolean;
 }
 
 export interface LendingHealth {
   isCollateralized: boolean;
+  /** Collateral USD value on a 1e18 scale (for example, $1 = 1_000000000000000000n). */
   collateralValue: bigint;
+  /** Debt USD value on a 1e18 scale (for example, $1 = 1_000000000000000000n). */
   debtValue: bigint;
 }
 
@@ -92,6 +106,8 @@ export interface LendingBorrowRequest extends LendingRequestBase {
   collateralAmount?: Amount;
   collateralDenomination?: LendingAmountDenomination;
   debtDenomination?: LendingAmountDenomination;
+  /** Withdraw from earn position (vault) and use as collateral for this borrow. */
+  useEarnPosition?: boolean;
 }
 
 export interface LendingRepayRequest extends LendingRequestBase {
@@ -152,6 +168,37 @@ export interface LendingMarketsRequest {
   provider?: LendingProvider | string;
 }
 
+export type LendingUserPositionType = "earn" | "borrow";
+
+export interface LendingTokenBalance {
+  token: Token;
+  /** Token amount in base units as an integer bigint (smallest indivisible token unit). */
+  amount: bigint;
+  /** USD value on a 1e18 scale (for example, $1 = 1_000000000000000000n). */
+  usdValue?: bigint;
+}
+
+export interface LendingUserPosition {
+  type: LendingUserPositionType;
+  pool: { id: Address; name?: string };
+  collateral: LendingTokenBalance;
+  collateralShares?: LendingTokenBalance;
+  debt?: LendingTokenBalance;
+}
+
+export interface LendingUserPositionsRequest {
+  provider?: LendingProvider | string;
+  user?: Address;
+}
+
+export interface LendingMaxBorrowRequest extends LendingRequestBase {
+  collateralToken: Token;
+  debtToken: Token;
+  user?: Address;
+  /** Include redeemable earn-position collateral in the max borrow calculation. */
+  useEarnPosition?: boolean;
+}
+
 export interface LendingProvider {
   readonly id: string;
   supportsChain(chainId: ChainId): boolean;
@@ -189,4 +236,12 @@ export interface LendingProvider {
     request: LendingHealthQuoteRequest,
     current: LendingHealth
   ): Promise<LendingHealth | null>;
+  getPositions?(
+    context: LendingProviderContext,
+    request: LendingUserPositionsRequest
+  ): Promise<LendingUserPosition[]>;
+  getMaxBorrowAmount?(
+    context: LendingProviderContext,
+    request: LendingMaxBorrowRequest
+  ): Promise<bigint>;
 }

@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo, useEffect, useRef } from "react";
+import { useCallback, useState, useMemo, useEffect } from "react";
 import {
   StyleSheet,
   ScrollView,
@@ -156,17 +156,16 @@ export default function TransfersScreen() {
     clearBalances,
   } = useBalancesStore();
 
-  const allTokens = getTokensForNetwork(chainId);
-  const strkToken = getStrkToken(chainId);
-  const wbtcToken = getWbtcToken(chainId);
-  const usdcToken = getUsdcToken(chainId);
+  const allTokens = useMemo(() => getTokensForNetwork(chainId), [chainId]);
+  const strkToken = useMemo(() => getStrkToken(chainId), [chainId]);
+  const wbtcToken = useMemo(() => getWbtcToken(chainId), [chainId]);
+  const usdcToken = useMemo(() => getUsdcToken(chainId), [chainId]);
   const primaryTokens = useMemo(() => {
     const eth = allTokens.find((t) => t.symbol === "ETH");
     return [strkToken, wbtcToken, usdcToken, eth].filter(
       (t): t is Token => t != null
     );
   }, [allTokens, strkToken, wbtcToken, usdcToken]);
-
   const networkName =
     NETWORKS.find((n) => n.chainId.toLiteral() === chainId.toLiteral())?.name ??
     "Custom";
@@ -174,17 +173,6 @@ export default function TransfersScreen() {
   const [transfers, setTransfers] = useState<TransferItem[]>([
     createEmptyTransfer(),
   ]);
-  const hasSetDefaultToken = useRef(false);
-  useEffect(() => {
-    if (hasSetDefaultToken.current || !strkToken) return;
-    hasSetDefaultToken.current = true;
-    setTransfers((prev) =>
-      prev.length > 0 && !prev[0]?.token
-        ? [{ ...prev[0], token: strkToken }]
-        : prev
-    );
-  }, [strkToken]);
-
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [useSponsored, setUseSponsored] = useState(
     preferSponsored && Boolean(paymasterNodeUrl)
@@ -198,6 +186,11 @@ export default function TransfersScreen() {
   // Token picker modal state
   const [showTokenPicker, setShowTokenPicker] = useState(false);
   const [activeTransferId, setActiveTransferId] = useState<string | null>(null);
+  useEffect(() => {
+    setTransfers([createDefaultTransfer(strkToken)]);
+    setShowTokenPicker(false);
+    setActiveTransferId(null);
+  }, [chainId, strkToken]);
 
   const handleRefresh = useCallback(async () => {
     if (wallet) {

@@ -31,6 +31,7 @@ function createContext(
 describe("VesuLendingProvider", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("supports mainnet and sepolia by default", () => {
@@ -38,6 +39,185 @@ describe("VesuLendingProvider", () => {
 
     expect(provider.supportsChain(ChainId.MAINNET)).toBe(true);
     expect(provider.supportsChain(ChainId.SEPOLIA)).toBe(true);
+  });
+
+  it("binds the default global fetch implementation", async () => {
+    const fetchMock = vi.fn(function (this: unknown, url: string) {
+      expect(this).toBe(globalThis);
+      expect(url).toBe("https://api.vesu.xyz/markets");
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ data: [] }),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const provider = new VesuLendingProvider();
+
+    await expect(provider.getMarkets(ChainId.MAINNET)).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips malformed position API items instead of failing the full response", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            protocolVersion: "v2",
+            pool: { id: "0x123", name: "Prime" },
+            type: "earn",
+            collateral: {
+              address: collateralToken.address,
+              symbol: collateralToken.symbol,
+              decimals: collateralToken.decimals,
+              value: "1000",
+            },
+          },
+          {
+            protocolVersion: "v2",
+            pool: { id: "not-an-address", name: "Broken" },
+            type: "earn",
+            collateral: {
+              address: collateralToken.address,
+              symbol: collateralToken.symbol,
+              decimals: collateralToken.decimals,
+              value: "1000",
+            },
+          },
+        ],
+      }),
+    });
+    const provider = new VesuLendingProvider({
+      fetcher: fetcher as unknown as typeof fetch,
+    });
+    const context = createContext(vi.fn());
+
+    const positions = await provider.getPositions(context, {});
+
+    expect(positions).toHaveLength(1);
+    expect(positions[0]).toMatchObject({
+      type: "earn",
+      pool: { id: fromAddress("0x123"), name: "Prime" },
+      collateral: {
+        amount: 1000n,
+        token: expect.objectContaining({
+          address: collateralToken.address,
+          symbol: collateralToken.symbol,
+        }),
+      },
+    });
+  });
+
+  it("filters out fully closed positions with zero collateral and zero debt", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            protocolVersion: "v2",
+            pool: { id: "0x123", name: "Prime" },
+            type: "earn",
+            collateral: {
+              address: collateralToken.address,
+              symbol: collateralToken.symbol,
+              decimals: collateralToken.decimals,
+              value: "0",
+            },
+          },
+          {
+            protocolVersion: "v2",
+            pool: { id: "0x456", name: "Active" },
+            type: "earn",
+            collateral: {
+              address: collateralToken.address,
+              symbol: collateralToken.symbol,
+              decimals: collateralToken.decimals,
+              value: "1000",
+            },
+          },
+          {
+            protocolVersion: "v2",
+            pool: { id: "0x789", name: "Closed Borrow" },
+            type: "borrow",
+            collateral: {
+              address: collateralToken.address,
+              symbol: collateralToken.symbol,
+              decimals: collateralToken.decimals,
+              value: "0",
+            },
+            debt: {
+              address: debtToken.address,
+              symbol: debtToken.symbol,
+              decimals: debtToken.decimals,
+              value: "0",
+            },
+          },
+        ],
+      }),
+    });
+    const provider = new VesuLendingProvider({
+      fetcher: fetcher as unknown as typeof fetch,
+    });
+    const context = createContext(vi.fn());
+
+    const positions = await provider.getPositions(context, {});
+
+    expect(positions).toHaveLength(1);
+    expect(positions[0]!.pool.name).toBe("Active");
+  });
+
+  it("derives position usdValue from amount and normalized usdPrice", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            protocolVersion: "v2",
+            pool: { id: "0x123", name: "Prime" },
+            type: "borrow",
+            collateral: {
+              address: collateralToken.address,
+              symbol: collateralToken.symbol,
+              decimals: 6,
+              value: "1500000",
+              usdPrice: {
+                value: "250000000",
+                decimals: 8,
+              },
+            },
+            debt: {
+              address: debtToken.address,
+              symbol: debtToken.symbol,
+              decimals: 18,
+              value: "2000000000000000000",
+              usdPrice: {
+                value: "4000000000000000000",
+                decimals: 18,
+              },
+            },
+          },
+        ],
+      }),
+    });
+    const provider = new VesuLendingProvider({
+      fetcher: fetcher as unknown as typeof fetch,
+    });
+    const context = createContext(vi.fn());
+
+    const positions = await provider.getPositions(context, {});
+
+    expect(positions).toHaveLength(1);
+    expect(positions[0]).toMatchObject({
+      collateral: {
+        amount: 1_500_000n,
+        usdValue: 3_750_000_000_000_000_000n,
+      },
+      debt: {
+        amount: 2_000_000_000_000_000_000n,
+        usdValue: 8_000_000_000_000_000_000n,
+      },
+    });
   });
 
   it("throws on deposit when chain has no poolFactory configured", async () => {
@@ -203,6 +383,61 @@ describe("VesuLendingProvider", () => {
     expect(prepared.calls[1]!.entrypoint).toBe("modify_position");
     expect(prepared.calls[1]!.contractAddress).toBe(fromAddress("0x999"));
     expect(callContract).not.toHaveBeenCalled();
+  });
+
+  it("treats zero earn shares as no existing supply when borrowing", async () => {
+    const callContract = vi
+      .fn()
+      .mockResolvedValueOnce([fromAddress("0x1234")])
+      .mockResolvedValueOnce(toU256Words(0n));
+    const provider = new VesuLendingProvider();
+    const context = createContext(callContract);
+
+    const prepared = await provider.prepareBorrow(context, {
+      poolAddress: fromAddress("0x999"),
+      collateralToken,
+      debtToken,
+      amount: Amount.parse("11", debtToken),
+      useEarnPosition: true,
+    });
+
+    expect(callContract).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        contractAddress: vesuPresets.SN_MAIN.poolFactory,
+        entrypoint: "v_token_for_asset",
+      })
+    );
+    expect(callContract).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        contractAddress: fromAddress("0x1234"),
+        entrypoint: "balance_of",
+      })
+    );
+    expect(prepared.calls).toHaveLength(1);
+    expect(prepared.calls[0]!.entrypoint).toBe("modify_position");
+    expect(prepared.calls[0]!.contractAddress).toBe(fromAddress("0x999"));
+  });
+
+  it("propagates earn-position lookup failures in borrow preparation", async () => {
+    const callContract = vi
+      .fn()
+      .mockResolvedValueOnce([fromAddress("0x1234")])
+      .mockResolvedValueOnce(toU256Words(5n))
+      .mockRejectedValueOnce(new Error("convert failed"));
+    const provider = new VesuLendingProvider();
+    const context = createContext(callContract);
+
+    await expect(
+      provider.prepareBorrow(context, {
+        poolAddress: fromAddress("0x999"),
+        collateralToken,
+        debtToken,
+        amount: Amount.parse("11", debtToken),
+        useEarnPosition: true,
+      })
+    ).rejects.toThrow("convert failed");
   });
 
   it("rejects delegated borrow user overrides", async () => {
@@ -454,6 +689,111 @@ describe("VesuLendingProvider", () => {
       collateralValue: 9n,
       debtValue: 10n,
     });
+  });
+
+  it("includes existing supply in projected borrow health when requested", async () => {
+    const oneUsd = 10n ** 18n;
+    const callContract = vi
+      .fn()
+      .mockResolvedValueOnce([fromAddress("0x1234")])
+      .mockResolvedValueOnce([...toU256Words(oneUsd)])
+      .mockResolvedValueOnce([...toU256Words(1_000n * oneUsd)])
+      .mockResolvedValueOnce([...toU256Words(oneUsd), "1"])
+      .mockResolvedValueOnce([...toU256Words(oneUsd), "1"])
+      .mockResolvedValueOnce(["700000000000000000", "0", "0"]);
+    const provider = new VesuLendingProvider();
+    const context = createContext(callContract);
+
+    const projected = await provider.quoteProjectedHealth(
+      context,
+      {
+        action: {
+          action: "borrow",
+          request: {
+            collateralToken,
+            debtToken,
+            amount: Amount.parse("200", debtToken),
+            useEarnPosition: true,
+          },
+        },
+        health: {
+          collateralToken,
+          debtToken,
+        },
+      },
+      {
+        isCollateralized: true,
+        collateralValue: 0n,
+        debtValue: 0n,
+      }
+    );
+
+    expect(projected).toEqual({
+      isCollateralized: true,
+      collateralValue: 1_000n * oneUsd,
+      debtValue: 200n * oneUsd,
+    });
+  });
+
+  it("applies the documented 1 percent safety margin to max borrow quotes", async () => {
+    const oneUsd = 10n ** 18n;
+    const callContract = vi
+      .fn()
+      .mockResolvedValueOnce([
+        "1",
+        ...toU256Words(1000n * oneUsd),
+        ...toU256Words(0n),
+      ])
+      .mockResolvedValueOnce([...toU256Words(oneUsd), "1"])
+      .mockResolvedValueOnce([...toU256Words(oneUsd), "1"])
+      .mockResolvedValueOnce(["500000000000000000"]);
+    const provider = new VesuLendingProvider();
+    const context = createContext(callContract);
+
+    const maxBorrow = await provider.getMaxBorrowAmount(context, {
+      collateralToken,
+      debtToken,
+    });
+
+    expect(maxBorrow).toBe(495_000_000n);
+  });
+
+  it("ignores earn-position collateral for max borrow unless explicitly requested", async () => {
+    const oneUsd = 10n ** 18n;
+    const provider = new VesuLendingProvider();
+
+    const withoutEarnContext = createContext(
+      vi
+        .fn()
+        .mockResolvedValueOnce(["1", ...toU256Words(0n), ...toU256Words(0n)])
+        .mockResolvedValueOnce([...toU256Words(oneUsd), "1"])
+        .mockResolvedValueOnce([...toU256Words(oneUsd), "1"])
+        .mockResolvedValueOnce(["500000000000000000"])
+    );
+    const withoutEarn = await provider.getMaxBorrowAmount(withoutEarnContext, {
+      collateralToken,
+      debtToken,
+    });
+
+    const withEarnContext = createContext(
+      vi
+        .fn()
+        .mockResolvedValueOnce(["1", ...toU256Words(0n), ...toU256Words(0n)])
+        .mockResolvedValueOnce([fromAddress("0x1234")])
+        .mockResolvedValueOnce([...toU256Words(oneUsd), "1"])
+        .mockResolvedValueOnce([...toU256Words(oneUsd), "1"])
+        .mockResolvedValueOnce(["500000000000000000"])
+        .mockResolvedValueOnce([...toU256Words(oneUsd)])
+        .mockResolvedValueOnce([...toU256Words(1_000n * oneUsd)])
+    );
+    const withEarn = await provider.getMaxBorrowAmount(withEarnContext, {
+      collateralToken,
+      debtToken,
+      useEarnPosition: true,
+    });
+
+    expect(withoutEarn).toBe(0n);
+    expect(withEarn).toBe(495_000_000n);
   });
 
   it("maps markets from API payload", async () => {
