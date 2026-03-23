@@ -1,16 +1,17 @@
 {
-  "name": "@starkzap/native",
-  "version": "1.0.0",
+  "name": "starkzap-native",
+  "version": "2.0.0",
   "description": "React Native companion package for Starkzap",
   "license": "MIT",
   "author": "0xLucqs",
   "type": "module",
+  "source": "./src/index.ts",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "react-native": "./dist/index.js",
+      "react-native": "./src/index.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
@@ -35,6 +36,7 @@
     "test:cartridge:parity": "npm run build --prefix ../.. && vitest run --config vitest.config.mjs tests/cartridge/parity.unit.test.ts"
   },
   "dependencies": {
+    "expo": "^55.0.8",
     "starkzap": "file:../.."
   },
   "peerDependencies": {

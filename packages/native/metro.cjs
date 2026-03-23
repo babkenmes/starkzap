@@ -49,7 +49,7 @@ function resolvePolyfills(projectRoot) {
     const list = missing.map((m) => `  - ${m}`).join("\n");
     const install = `npm install ${missing.join(" ")}`;
     console.warn(
-      `\n[@starkzap/native] Missing required polyfills:\n${list}\n\n` +
+      `\n[starkzap-native] Missing required polyfills:\n${list}\n\n` +
         `Install them to avoid runtime crashes:\n  ${install}\n`
     );
   }
@@ -68,7 +68,7 @@ function resolvePolyfills(projectRoot) {
  * ```js
  * // metro.config.js
  * const { getDefaultConfig } = require("expo/metro-config");
- * const { withStarkzap } = require("@starkzap/native/metro");
+ * const { withStarkzap } = require("starkzap-native/metro");
  *
  * const config = getDefaultConfig(__dirname);
  * module.exports = withStarkzap(config);
@@ -119,7 +119,21 @@ function withStarkzap(config) {
   config.resolver = config.resolver || {};
   const prev = config.resolver.resolveRequest;
 
+  // The native package uses @/* path aliases (tsconfig paths) that map to
+  // packages/native/src/*. When Metro reads the source directly (via the
+  // "source" field), it needs to resolve these aliases at bundle time.
+  const nativeSrcDir = path.resolve(__dirname, "src");
+
   config.resolver.resolveRequest = (context, moduleName, platform) => {
+    // Resolve @/* imports originating from the native package's own source.
+    if (
+      moduleName.startsWith("@/") &&
+      context.originModulePath.startsWith(nativeSrcDir)
+    ) {
+      const resolved = path.join(nativeSrcDir, moduleName.slice(2));
+      const resolver = prev ?? context.resolveRequest;
+      return resolver(context, resolved, platform);
+    }
     const bare = moduleName.startsWith("node:")
       ? moduleName.slice(5)
       : moduleName;
