@@ -1,0 +1,66 @@
+{
+  "version": "controller-ts-v1",
+  "guidVectors": [
+    {
+      "privateKey": "0x1",
+      "expectedGuid": "0x78e6eccfb97cea1b4ca2e0735d0db7cd9e33a316378391e58e7f3ed107062c2"
+    },
+    {
+      "privateKey": "0x1234",
+      "expectedGuid": "0x58ac893dc948983bdef06631ed29f9644aafe39f7be720f0f9d5f90a252bfed"
+    },
+    {
+      "privateKey": "0xabcde",
+      "expectedGuid": "0x461fe0fe58df6fff095ca2235bd5c9b93cd247c3c2f864cef362ec17850cfd3"
+    }
+  ],
+  "policyVectors": [
+    {
+      "name": "three-policies-unsorted",
+      "input": [
+        {
+          "target": "0xabc",
+          "method": "play_move"
+        },
+        {
+          "target": "0x1",
+          "method": "create_game"
+        },
+        {
+          "target": "0xabc",
+          "method": "create_game"
+        }
+      ],
+      "expectedCanonical": [
+        {
+          "contractAddress": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "entrypoint": "create_game"
+        },
+        {
+          "contractAddress": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+          "entrypoint": "create_game"
+        },
+        {
+          "contractAddress": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+          "entrypoint": "play_move"
+        }
+      ],
+      "expectedMerkleRoot": "0x6ae6996f601f89b494729b1e796ed31989e05c8c4a6aae33ff5bf12d8eceaee"
+    }
+  ],
+  "sessionVectors": [
+    {
+      "name": "redirect-encoded-session",
+      "encodedSession": "eyJ1c2VybmFtZSI6InBsYXllcjEiLCJhZGRyZXNzIjoiMHhhYmMiLCJvd25lckd1aWQiOiIweDEyMyIsImV4cGlyZXNBdCI6IjEyMzQ1Njc4OTAiLCJndWFyZGlhbktleUd1aWQiOiIweDAiLCJtZXRhZGF0YUhhc2giOiIweDAiLCJzZXNzaW9uS2V5R3VpZCI6IjB4OTk5In0=",
+      "expected": {
+        "username": "player1",
+        "address": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+        "ownerGuid": "0x123",
+        "expiresAt": "1234567890",
+        "guardianKeyGuid": "0x0",
+        "metadataHash": "0x0",
+        "sessionKeyGuid": "0x999"
+      }
+    }
+  ]
+}
