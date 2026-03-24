@@ -114,6 +114,10 @@ export type ExplorerProvider = "voyager" | "starkscan";
 /**
  * Configuration for building explorer URLs.
  *
+ * Choose **one** of:
+ * - A known provider name (Voyager or Starkscan)
+ * - A custom base URL
+ *
  * @example
  * ```ts
  * // Use a known provider
@@ -123,12 +127,9 @@ export type ExplorerProvider = "voyager" | "starkscan";
  * { baseUrl: "https://my-explorer.com" }
  * ```
  */
-export interface ExplorerConfig {
-  /** Use a known explorer provider */
-  provider?: ExplorerProvider;
-  /** Or provide a custom base URL (takes precedence over provider) */
-  baseUrl?: string;
-}
+export type ExplorerConfig =
+  | { provider: ExplorerProvider; baseUrl?: never }
+  | { baseUrl: string; provider?: never };
 
 /**
  * Configuration for the Staking module.
