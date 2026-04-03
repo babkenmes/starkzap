@@ -167,6 +167,18 @@ export class BridgeOperator implements BridgeOperatorInterface {
         const { OftBridge } = await import("@/bridge/ethereum/oft/OftBridge");
         return new OftBridge(token, walletConfig, starknetWallet, apiKey);
       }
+      case Protocol.LAYERSWAP: {
+        const apiKey = this.bridgingConfig?.layerSwapApiKey;
+        if (!apiKey) {
+          throw new Error(
+            "LayerSwap bridging requires an API key. " +
+              'Set "bridging.layerSwapApiKey" in the SDK configuration.'
+          );
+        }
+        const { LayerSwapBridge } =
+          await import("@/bridge/layerswap/LayerSwapBridge");
+        return new LayerSwapBridge(token, walletConfig, starknetWallet, apiKey);
+      }
       default:
         throw new Error(
           `Unsupported protocol "${token.protocol}" for ${token.chain} chain.`

@@ -117,6 +117,8 @@ function parseProtocol(protocol: string): Protocol {
       return Protocol.OFT_MIGRATED;
     case Protocol.HYPERLANE:
       return Protocol.HYPERLANE;
+    case Protocol.LAYERSWAP:
+      return Protocol.LAYERSWAP;
     default:
       throw new Error(`Unsupported protocol "${protocol}"`);
   }
@@ -167,7 +169,8 @@ function parseToken(
       protocol !== Protocol.CANONICAL &&
       protocol !== Protocol.CCTP &&
       protocol !== Protocol.OFT &&
-      protocol !== Protocol.OFT_MIGRATED
+      protocol !== Protocol.OFT_MIGRATED &&
+      protocol !== Protocol.LAYERSWAP
     ) {
       throw new Error(
         `Invalid protocol "${protocol}" for chain "${ExternalChain.ETHEREUM}"`
