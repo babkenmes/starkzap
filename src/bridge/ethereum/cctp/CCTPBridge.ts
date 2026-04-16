@@ -2,6 +2,7 @@ import {
   type Address,
   Amount,
   type EthereumAddress,
+  EthereumBridgeToken,
   type ExternalAddress,
   type ExternalTransactionResponse,
   fromAddress,
@@ -16,6 +17,7 @@ import type {
   CCTPDepositFeeEstimation,
   CCTPInitiateWithdrawFeeEstimation,
   EthereumCompleteWithdrawFeeEstimation,
+  EthereumWalletConfig,
 } from "@/bridge";
 import { ERC20EthereumToken } from "@/bridge/ethereum/EtherToken";
 import { getAddress, Interface, type TransactionRequest } from "ethers";
@@ -39,6 +41,8 @@ import { EthereumBridge } from "@/bridge/ethereum/EthereumBridge";
 import { fromEthereumAddress } from "@/connect/ethersRuntime";
 import type { Tx } from "@/tx";
 import { cairo, type Call, CallData, uint256 } from "starknet";
+import type { WalletInterface } from "@/wallet";
+import { type StarkZapLogger } from "@/logger";
 
 export class CCTPBridge extends EthereumBridge {
   private static readonly MAINNET_TOKEN_MESSENGER = fromEthereumAddress(
@@ -66,7 +70,15 @@ export class CCTPBridge extends EthereumBridge {
 
   private static readonly ZERO_ETH = Amount.fromRaw(0n, 18, "ETH");
 
-  private readonly cctpFees = CCTPFees.getInstance();
+  constructor(
+    bridgeToken: EthereumBridgeToken,
+    config: EthereumWalletConfig,
+    starknetWallet: WalletInterface,
+    logger: StarkZapLogger,
+    private readonly cctpFees: CCTPFees
+  ) {
+    super(bridgeToken, config, starknetWallet, logger);
+  }
 
   async deposit(
     recipient: Address,
@@ -136,7 +148,10 @@ export class CCTPBridge extends EthereumBridge {
           ...approvalFeeData,
         };
       } catch (e) {
-        console.debug("[CCTPBridge] getDepositFeeEstimate (L1 gas) failed:", e);
+        this.logger.debug(
+          "[CCTPBridge] getDepositFeeEstimate (L1 gas) failed:",
+          e
+        );
         return {
           l1Fee: defaultL1Fee,
           l1FeeError: FeeErrorCause.GENERIC_L1_FEE_ERROR,
@@ -190,7 +205,7 @@ export class CCTPBridge extends EthereumBridge {
         fastTransferBpFee,
       };
     } catch (e) {
-      console.debug(
+      this.logger.debug(
         "[CCTPBridge] getInitiateWithdrawFeeEstimate (L2 fee) failed:",
         e
       );
@@ -289,7 +304,10 @@ export class CCTPBridge extends EthereumBridge {
         l1Fee: this.ethAmount(FALLBACK_COMPLETE_WITHDRAW_GAS * gasPrice),
       };
     } catch (e) {
-      console.debug("[CCTPBridge] getCompleteWithdrawFeeEstimate failed:", e);
+      this.logger.debug(
+        "[CCTPBridge] getCompleteWithdrawFeeEstimate failed:",
+        e
+      );
       return {
         l1Fee: this.ethAmount(0n),
         l1FeeError: FeeErrorCause.GENERIC_L1_FEE_ERROR,

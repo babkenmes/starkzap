@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BRIDGE_TOKEN_CACHE_TTL_MS, BridgeTokenRepository } from "@/bridge";
+import {
+  BRIDGE_TOKEN_CACHE_TTL_MS,
+  BridgeTokenRepository,
+} from "@/bridge/tokens/repository";
 import * as ethersRuntime from "@/connect/ethersRuntime";
 import * as solanaWeb3Runtime from "@/connect/solanaWeb3Runtime";
 import {
@@ -8,6 +11,23 @@ import {
   Protocol,
   SolanaBridgeToken,
 } from "@/types";
+import { StarkZapLogger } from "@/logger";
+
+function createMockLogger() {
+  return {
+    instance: new StarkZapLogger(
+      { debug() {}, info() {}, warn() {}, error() {} },
+      "trace"
+    ),
+    spies: {
+      warn: vi.fn() as ReturnType<typeof vi.fn>,
+    },
+    install() {
+      this.spies.warn = vi.spyOn(this.instance, "warn");
+      return this;
+    },
+  };
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -233,10 +253,11 @@ describe("BridgeTokenRepository", () => {
         '[starkzap] Bridge token parsing requires optional peer dependency "@solana/web3.js". Install it with: npm i @solana/web3.js'
       )
     );
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mockLogger = createMockLogger().install();
 
     const repository = new BridgeTokenRepository({
       fetchFn: fetchMock as unknown as typeof fetch,
+      logger: mockLogger.instance,
     });
     const tokens = await repository.getTokens();
 
@@ -244,7 +265,7 @@ describe("BridgeTokenRepository", () => {
     expect(
       tokens.every((token) => token.chain === ExternalChain.ETHEREUM)
     ).toBe(true);
-    expect(warnSpy).toHaveBeenCalledWith(
+    expect(mockLogger.spies.warn).toHaveBeenCalledWith(
       '[starkzap] Skipping solana bridge tokens because optional peer dependency "@solana/web3.js" is not installed.',
       expect.any(Error)
     );
@@ -262,16 +283,17 @@ describe("BridgeTokenRepository", () => {
         '[starkzap] Bridge token parsing requires optional peer dependency "ethers". Install it with: npm i ethers'
       )
     );
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mockLogger = createMockLogger().install();
 
     const repository = new BridgeTokenRepository({
       fetchFn: fetchMock as unknown as typeof fetch,
+      logger: mockLogger.instance,
     });
     const tokens = await repository.getTokens();
 
     expect(tokens).toHaveLength(1);
     expect(tokens[0]?.chain).toBe(ExternalChain.SOLANA);
-    expect(warnSpy).toHaveBeenCalledWith(
+    expect(mockLogger.spies.warn).toHaveBeenCalledWith(
       '[starkzap] Skipping ethereum bridge tokens because optional peer dependency "ethers" is not installed.',
       expect.any(Error)
     );

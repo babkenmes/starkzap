@@ -23,12 +23,14 @@ import {
   getTokenMessenger,
   STARKNET_DOMAIN_ID,
 } from "@/bridge/ethereum/cctp/constants";
+import type { StarkZapLogger } from "@/logger";
 
 export interface CctpMonitorOptions {
   chainId: ChainId;
   starknetProvider: RpcProvider;
   ethereumProvider: Provider;
   fetchFn?: typeof fetch;
+  logger: StarkZapLogger;
 }
 
 interface CCTPMessagesResponse {
@@ -67,6 +69,7 @@ export class CctpMonitor implements BridgeMonitorInterface {
   private readonly starknetProvider: RpcProvider;
   private readonly ethereumProvider: Provider;
   private readonly fetchFn: typeof fetch;
+  private readonly logger: StarkZapLogger;
   private messageTransmitterPromise: Promise<Address> | undefined;
 
   private messageReceivedKey = num.toHex(
@@ -78,6 +81,7 @@ export class CctpMonitor implements BridgeMonitorInterface {
     this.starknetProvider = options.starknetProvider;
     this.ethereumProvider = options.ethereumProvider;
     this.fetchFn = resolveFetch(options.fetchFn);
+    this.logger = options.logger;
   }
 
   async monitorDeposit(
@@ -87,7 +91,8 @@ export class CctpMonitor implements BridgeMonitorInterface {
     if (starknetTxHash) {
       const status = await checkStarknetTxStatus(
         starknetTxHash,
-        this.starknetProvider
+        this.starknetProvider,
+        this.logger
       );
       return { status, externalTxHash, starknetTxHash };
     }
@@ -126,7 +131,8 @@ export class CctpMonitor implements BridgeMonitorInterface {
 
     const snStatus = await checkStarknetTxStatus(
       snTxHash,
-      this.starknetProvider
+      this.starknetProvider,
+      this.logger
     );
     return { status: snStatus, externalTxHash, starknetTxHash: snTxHash };
   }
@@ -154,7 +160,8 @@ export class CctpMonitor implements BridgeMonitorInterface {
 
     const snStatus = await checkStarknetTxStatus(
       snTxHash,
-      this.starknetProvider
+      this.starknetProvider,
+      this.logger
     );
 
     // Only check Circle once the Starknet burn tx has reached soft finality.
@@ -284,7 +291,7 @@ export class CctpMonitor implements BridgeMonitorInterface {
 
       return null;
     } catch (e) {
-      console.debug("[CctpMonitor] tryFetchAttestation failed:", e);
+      this.logger.debug("[CctpMonitor] tryFetchAttestation failed:", e);
       return null;
     }
   }
@@ -332,7 +339,7 @@ export class CctpMonitor implements BridgeMonitorInterface {
 
       return null;
     } catch (e) {
-      console.debug("[CctpMonitor] findDepositTxOnSn failed:", e);
+      this.logger.debug("[CctpMonitor] findDepositTxOnSn failed:", e);
       return null;
     }
   }
@@ -364,7 +371,7 @@ export class CctpMonitor implements BridgeMonitorInterface {
         }),
       };
     } catch (e) {
-      console.debug("[CctpMonitor] tryFetchDepositAttestation failed:", e);
+      this.logger.debug("[CctpMonitor] tryFetchDepositAttestation failed:", e);
       return null;
     }
   }
