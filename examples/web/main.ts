@@ -158,6 +158,9 @@ const OFT_PUBLIC_KEY = import.meta.env.VITE_OFT_PUBLIC_KEY as
 const LAYERSWAP_API_KEY = import.meta.env.VITE_LAYERSWAP_API_KEY as
   | string
   | undefined;
+const LAYERSWAP_BASE_URL = import.meta.env.VITE_LAYERSWAP_BASE_URL as
+  | string
+  | undefined;
 const BPS_DENOMINATOR = 10_000n;
 const DEFAULT_SLIPPAGE_BPS = 100n;
 const DEFAULT_DCA_FREQUENCY = "P1D";
@@ -224,6 +227,7 @@ const sdk = new StarkZap({
           }),
           ...(OFT_PUBLIC_KEY && { layerZeroApiKey: OFT_PUBLIC_KEY }),
           ...(LAYERSWAP_API_KEY && { layerSwapApiKey: LAYERSWAP_API_KEY }),
+          ...(LAYERSWAP_BASE_URL && { layerSwapBaseUrl: LAYERSWAP_BASE_URL }),
         },
       }
     : {}),

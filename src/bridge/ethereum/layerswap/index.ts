@@ -1,13 +1,11 @@
 export {
-  LayerSwapApi,
-  type LayerSwapApiConfig,
-} from "@/bridge/layerswap/LayerSwapApi";
-export {
   LayerSwapBridge,
   type LayerSwapDepositFeeEstimation,
-} from "@/bridge/layerswap/LayerSwapBridge";
+} from "@/bridge/ethereum/layerswap/LayerSwapBridge";
 export {
+  LayerSwapApi,
   LayerSwapApiError,
+  type LayerSwapApiConfig,
   type LayerSwapCreateRequest,
   type LayerSwapQuoteRequest,
   type LsApiResponse,
@@ -23,4 +21,4 @@ export {
   type LsSwapStatus,
   type LsToken,
   type LsTransaction,
-} from "@/bridge/layerswap/types";
+} from "@layerswap/sdk";

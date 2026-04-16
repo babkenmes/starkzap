@@ -184,6 +184,13 @@ export interface BridgingConfig {
    */
   layerSwapApiKey?: string;
 
+  /**
+   * Custom LayerSwap API base URL.
+   *
+   * Defaults to `https://api.layerswap.io` when omitted.
+   */
+  layerSwapBaseUrl?: string;
+
   /** Custom Ethereum JSON-RPC endpoint used for gas estimation in Ethereum bridges. */
   ethereumRpcUrl?: string;
 

@@ -15,7 +15,7 @@
  *     npx vitest run tests/layerswap-e2e.test.ts
  */
 import { describe, expect, it } from "vitest";
-import { LayerSwapBridge } from "@/bridge/layerswap/LayerSwapBridge";
+import { LayerSwapBridge } from "@/bridge/ethereum/layerswap/LayerSwapBridge";
 import {
   EthereumBridgeToken,
   Protocol,

@@ -14,4 +14,4 @@ export type EthereumBridgeProtocol =
   | Protocol.OFT_MIGRATED
   | Protocol.LAYERSWAP;
 
-export type SolanaBridgeProtocol = Protocol.HYPERLANE;
+export type SolanaBridgeProtocol = Protocol.HYPERLANE | Protocol.LAYERSWAP;

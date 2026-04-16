@@ -176,8 +176,15 @@ export class BridgeOperator implements BridgeOperatorInterface {
           );
         }
         const { LayerSwapBridge } =
-          await import("@/bridge/layerswap/LayerSwapBridge");
-        return new LayerSwapBridge(token, walletConfig, starknetWallet, apiKey);
+          await import("@/bridge/ethereum/layerswap/LayerSwapBridge");
+        const baseUrl = this.bridgingConfig?.layerSwapBaseUrl;
+        return new LayerSwapBridge(
+          token,
+          walletConfig,
+          starknetWallet,
+          apiKey,
+          baseUrl ? { baseUrl } : undefined
+        );
       }
       default:
         throw new Error(
@@ -221,6 +228,25 @@ export class BridgeOperator implements BridgeOperatorInterface {
           walletConfig,
           starknetWallet
         );
+      case Protocol.LAYERSWAP: {
+        const apiKey = this.bridgingConfig?.layerSwapApiKey;
+        if (!apiKey) {
+          throw new Error(
+            "LayerSwap bridging requires an API key. " +
+              'Set "bridging.layerSwapApiKey" in the SDK configuration.'
+          );
+        }
+        const { SolanaLayerSwapBridge } =
+          await import("@/bridge/solana/SolanaLayerSwapBridge");
+        const baseUrl = this.bridgingConfig?.layerSwapBaseUrl;
+        return new SolanaLayerSwapBridge(
+          token,
+          walletConfig,
+          starknetWallet,
+          apiKey,
+          baseUrl ? { baseUrl } : undefined
+        );
+      }
       default:
         throw new Error(
           `Unsupported protocol "${token.protocol}" for ${token.chain} chain.`

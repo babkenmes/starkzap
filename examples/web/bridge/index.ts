@@ -12,7 +12,10 @@ import {
   type EthereumDepositFeeEstimation,
   ExternalChain,
   Protocol,
+  type SolanaAddress,
+  SolanaBridgeToken,
   type SolanaDepositFeeEstimation,
+  type SolanaLayerSwapDepositFeeEstimation,
   type SolanaProvider,
   type StarkZap,
   type WalletInterface,
@@ -47,7 +50,11 @@ export interface BridgeState {
   externalBalanceLoading: boolean;
   allowance: string | null;
   allowanceLoading: boolean;
-  feeEstimate: EthereumDepositFeeEstimation | SolanaDepositFeeEstimation | null;
+  feeEstimate:
+    | EthereumDepositFeeEstimation
+    | SolanaDepositFeeEstimation
+    | SolanaLayerSwapDepositFeeEstimation
+    | null;
   feeLoading: boolean;
   fastTransfer: boolean;
   tokensLoading: boolean;
@@ -328,11 +335,23 @@ export class BridgeController {
 
       // Inject LayerSwap tokens until StarkGate API includes them
       if (chains.includes(ExternalChain.ETHEREUM)) {
-        const hasLayerSwap = tokens.some(
-          (t) => t.protocol === Protocol.LAYERSWAP
+        const hasEthLayerSwap = tokens.some(
+          (t) =>
+            t.protocol === Protocol.LAYERSWAP &&
+            t.chain === ExternalChain.ETHEREUM
         );
-        if (!hasLayerSwap) {
-          tokens.push(...getLayerSwapTestTokens());
+        if (!hasEthLayerSwap) {
+          tokens.push(...getEthereumLayerSwapTestTokens());
+        }
+      }
+      if (chains.includes(ExternalChain.SOLANA)) {
+        const hasSolLayerSwap = tokens.some(
+          (t) =>
+            t.protocol === Protocol.LAYERSWAP &&
+            t.chain === ExternalChain.SOLANA
+        );
+        if (!hasSolLayerSwap) {
+          tokens.push(...getSolanaLayerSwapTestTokens());
         }
       }
 
@@ -561,15 +580,24 @@ export class BridgeController {
   }
 }
 
+type FeeEstimate =
+  | EthereumDepositFeeEstimation
+  | SolanaDepositFeeEstimation
+  | SolanaLayerSwapDepositFeeEstimation;
+
 function isEthereumFee(
-  estimate: EthereumDepositFeeEstimation | SolanaDepositFeeEstimation
+  estimate: FeeEstimate
 ): estimate is EthereumDepositFeeEstimation {
   return "l1Fee" in estimate;
 }
 
-export function formatFeeEstimate(
-  estimate: EthereumDepositFeeEstimation | SolanaDepositFeeEstimation
-): string {
+function isSolanaLayerSwapFee(
+  estimate: FeeEstimate
+): estimate is SolanaLayerSwapDepositFeeEstimation {
+  return "serviceFee" in estimate && "avgCompletionTime" in estimate;
+}
+
+export function formatFeeEstimate(estimate: FeeEstimate): string {
   const lines: string[] = [];
 
   if (isEthereumFee(estimate)) {
@@ -589,6 +617,11 @@ export function formatFeeEstimate(
         `Fast Transfer Fee: ${(cctp.fastTransferBpFee / 100).toFixed(2)}%`
       );
     }
+  } else if (isSolanaLayerSwapFee(estimate)) {
+    lines.push(`Blockchain Fee: ${estimate.blockchainFee.toFormatted(false)}`);
+    lines.push(`Service Fee: ${estimate.serviceFee.toFormatted(false)}`);
+    lines.push(`Receive: ${estimate.receiveAmount.toFormatted(false)}`);
+    lines.push(`Est. Time: ${estimate.avgCompletionTime}`);
   } else {
     lines.push(
       `Local Fee: ${estimate.localFee.toFormatted(false)}${estimate.localFeeError ? " (est.)" : ""}`
@@ -605,7 +638,7 @@ export function formatFeeEstimate(
  * Hardcoded LayerSwap tokens for testing until StarkGate API includes them.
  * Remove this once StarkGate serves protocol:"layerswap" tokens.
  */
-function getLayerSwapTestTokens(): EthereumBridgeToken[] {
+function getEthereumLayerSwapTestTokens(): EthereumBridgeToken[] {
   return [
     new EthereumBridgeToken({
       id: "eth-layerswap",
@@ -628,6 +661,24 @@ function getLayerSwapTestTokens(): EthereumBridgeToken[] {
       protocol: Protocol.LAYERSWAP,
       address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as EthereumAddress,
       l1Bridge: "0x0000000000000000000000000000000000000000" as EthereumAddress,
+      starknetAddress: fromAddress(
+        "0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8"
+      ),
+      starknetBridge: fromAddress("0x0"),
+    }),
+  ];
+}
+
+function getSolanaLayerSwapTestTokens(): SolanaBridgeToken[] {
+  return [
+    new SolanaBridgeToken({
+      id: "usdc-solana-layerswap",
+      name: "USDC (Solana LayerSwap)",
+      symbol: "USDC",
+      decimals: 6,
+      protocol: Protocol.LAYERSWAP,
+      address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" as SolanaAddress,
+      l1Bridge: "11111111111111111111111111111111" as SolanaAddress,
       starknetAddress: fromAddress(
         "0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8"
       ),

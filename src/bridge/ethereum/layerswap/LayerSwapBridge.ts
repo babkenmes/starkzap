@@ -1,10 +1,10 @@
 import { EthereumBridge } from "@/bridge/ethereum/EthereumBridge";
 import type { BridgeDepositOptions } from "@/bridge/types/BridgeInterface";
 import {
-  type LayerSwapApiConfig,
   LayerSwapApi,
-} from "@/bridge/layerswap/LayerSwapApi";
-import type { LsDepositAction } from "@/bridge/layerswap/types";
+  type LayerSwapApiConfig,
+  type LsDepositAction,
+} from "@layerswap/sdk";
 import type {
   EthereumDepositFeeEstimation,
   EthereumWalletConfig,
@@ -150,6 +150,22 @@ export class LayerSwapBridge extends EthereumBridge {
       ),
       avgCompletionTime: quote.avg_completion_time,
     };
+  }
+
+  async getAvailableDepositBalance(account: EthereumAddress): Promise<Amount> {
+    const isNativeEth =
+      this.bridgeToken.address === "0x0000000000000000000000000000000000000000";
+
+    if (isNativeEth) {
+      const balance = await this.config.provider.getBalance!(account);
+      return Amount.fromRaw(
+        balance,
+        this.bridgeToken.decimals,
+        this.bridgeToken.symbol
+      );
+    }
+
+    return super.getAvailableDepositBalance(account);
   }
 
   // LayerSwap handles approvals within deposit actions.

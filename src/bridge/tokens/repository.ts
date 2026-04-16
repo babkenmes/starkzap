@@ -1,5 +1,9 @@
 import { assertSafeHttpUrl } from "@/utils";
-import { type EthereumBridgeProtocol, Protocol } from "@/types/bridge/protocol";
+import {
+  type EthereumBridgeProtocol,
+  type SolanaBridgeProtocol,
+  Protocol,
+} from "@/types/bridge/protocol";
 import { ExternalChain } from "@/types/bridge/external-chain";
 import {
   type BridgeToken,
@@ -203,7 +207,7 @@ function parseToken(
       );
     }
 
-    if (protocol !== Protocol.HYPERLANE) {
+    if (protocol !== Protocol.HYPERLANE && protocol !== Protocol.LAYERSWAP) {
       throw new Error(
         `Invalid protocol "${protocol}" for chain "${ExternalChain.SOLANA}"`
       );
@@ -214,7 +218,7 @@ function parseToken(
       name: requiredString(token, "name"),
       symbol: requiredString(token, "symbol"),
       decimals: requiredNumber(token, "decimals"),
-      protocol: Protocol.HYPERLANE,
+      protocol: protocol as SolanaBridgeProtocol,
       address: normalizeSolanaAddress(
         requiredString(token, "l1_token_address")
       ),
