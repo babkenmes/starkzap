@@ -41,7 +41,7 @@ import type {
   TypedData,
 } from "starknet";
 import { Erc20 } from "@/erc20";
-import { Staking } from "@/staking";
+import { Staking, EndurStaking, type EndurStakingOptions } from "@/staking";
 import type { PreparedSwap, SwapInput, SwapProvider, SwapQuote } from "@/swap";
 import { AvnuSwapProvider } from "@/swap";
 import { resolveSwapInput } from "@/swap/utils";
@@ -115,6 +115,7 @@ export abstract class BaseWallet implements WalletInterface {
    */
   private stakingMap: Map<Address, Staking> = new Map();
   private stakingInFlight: Map<Address, Promise<Staking>> = new Map();
+  private lstStakingMap: Map<string, EndurStaking> = new Map();
 
   private readonly bridging: BridgeOperator;
 
@@ -789,6 +790,27 @@ export abstract class BaseWallet implements WalletInterface {
     options?: BridgeDepositOptions
   ): Promise<BridgeDepositFeeEstimation> {
     return this.bridging.getDepositFeeEstimate(token, externalWallet, options);
+  }
+
+  /**
+   * Get an EndurStaking instance for an LST asset (e.g. "STRK", "WBTC").
+   *
+   * Instances are cached by asset symbol. `EndurStaking` mirrors the `Staking`
+   * API — use `enter`, `exitIntent`, `getPosition`, etc.
+   */
+  lstStaking(asset: string, options?: EndurStakingOptions): EndurStaking {
+    const key = asset.toLowerCase();
+    const cached = this.lstStakingMap.get(key);
+    if (cached) return cached;
+
+    const instance = EndurStaking.from(
+      asset,
+      this.getProvider(),
+      this.getChainId(),
+      options
+    );
+    this.lstStakingMap.set(key, instance);
+    return instance;
   }
 
   /** {@inheritDoc WalletInterface.initiateWithdraw} */
