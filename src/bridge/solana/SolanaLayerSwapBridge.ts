@@ -2,11 +2,11 @@ import type {
   BridgeDepositOptions,
   BridgeInterface,
 } from "@/bridge/types/BridgeInterface";
-import {
-  LayerSwapApi,
-  type LayerSwapApiConfig,
-  type LsDepositAction,
-} from "@layerswap/sdk";
+import { LayerSwapApi } from "@/bridge/ethereum/layerswap/LayerSwapApi";
+import type {
+  LayerSwapApiConfig,
+  LsDepositAction,
+} from "@/bridge/ethereum/layerswap/types";
 import type { SolanaWalletConfig } from "@/bridge/solana/types";
 import {
   type Address,

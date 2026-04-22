@@ -131,7 +131,6 @@
   },
   "dependencies": {
     "@avnu/avnu-sdk": "^4.1.0-rc.0",
-    "@layerswap/sdk": "^0.2.0",
     "starknet": "^9.2.1"
   }
 }

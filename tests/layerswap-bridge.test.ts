@@ -11,7 +11,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BridgeTokenRepository } from "@/bridge";
-import { LayerSwapApi } from "@layerswap/sdk";
+import { LayerSwapApi } from "@/bridge/ethereum/layerswap/LayerSwapApi";
 import { LayerSwapBridge } from "@/bridge/ethereum/layerswap/LayerSwapBridge";
 import {
   EthereumBridgeToken,

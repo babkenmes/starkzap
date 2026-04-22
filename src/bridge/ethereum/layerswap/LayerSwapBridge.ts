@@ -1,10 +1,10 @@
 import { EthereumBridge } from "@/bridge/ethereum/EthereumBridge";
 import type { BridgeDepositOptions } from "@/bridge/types/BridgeInterface";
-import {
-  LayerSwapApi,
-  type LayerSwapApiConfig,
-  type LsDepositAction,
-} from "@layerswap/sdk";
+import { LayerSwapApi } from "@/bridge/ethereum/layerswap/LayerSwapApi";
+import type {
+  LayerSwapApiConfig,
+  LsDepositAction,
+} from "@/bridge/ethereum/layerswap/types";
 import type {
   EthereumDepositFeeEstimation,
   EthereumWalletConfig,
