@@ -1,34 +1,36 @@
 import {
-  RpcProvider,
   type Account,
   type Call,
   type PaymasterTimeBounds,
-  type TypedData,
+  RpcProvider,
   type Signature,
+  type TypedData,
 } from "starknet";
 import { Tx } from "@/tx";
 import {
   type BridgingConfig,
   ChainId,
-  getChainId,
   type DeployOptions,
   type EnsureReadyOptions,
   type ExecuteOptions,
+  type ExplorerConfig,
   type FeeMode,
+  fromAddress,
+  getChainId,
   type PreflightOptions,
   type PreflightResult,
-  type ExplorerConfig,
-  fromAddress,
   type StakingConfig,
 } from "@/types";
 import {
   checkDeployed,
   ensureWalletReady,
+  normalizeFeeMode,
+  paymasterDetails,
   preflightTransaction,
-  sponsoredDetails,
 } from "@/wallet/utils";
 import { BaseWallet } from "@/wallet/base";
 import { assertSafeHttpUrl } from "@/utils";
+import type { LoggerConfig } from "@/logger";
 
 const NEGATIVE_DEPLOYMENT_CACHE_TTL_MS = 3_000;
 const MAX_CONTROLLER_WAIT_MS = 10_000;
@@ -101,6 +103,7 @@ export interface CartridgeWalletOptions {
   feeMode?: FeeMode;
   timeBounds?: PaymasterTimeBounds;
   explorer?: ExplorerConfig;
+  logging?: LoggerConfig;
 }
 
 /**
@@ -151,6 +154,7 @@ export class CartridgeWallet extends BaseWallet {
       address: fromAddress(walletAccount.address),
       stakingConfig,
       bridgingConfig,
+      ...(options.logging && { logging: options.logging }),
     });
     this.controller = controller;
     this.walletAccount = walletAccount;
@@ -307,18 +311,18 @@ export class CartridgeWallet extends BaseWallet {
   }
 
   async execute(calls: Call[], options: ExecuteOptions = {}): Promise<Tx> {
-    const feeMode = options.feeMode ?? this.defaultFeeMode;
+    const feeMode = normalizeFeeMode(options.feeMode ?? this.defaultFeeMode);
     const timeBounds = options.timeBounds ?? this.defaultTimeBounds;
 
     let transaction_hash: string;
 
-    if (feeMode === "sponsored") {
+    if (feeMode !== "user_pays") {
       // Allow provider/controller implementations to handle undeployed accounts
       // atomically via paymaster flow when supported.
       transaction_hash = (
         await this.walletAccount.executePaymasterTransaction(
           calls,
-          sponsoredDetails(timeBounds)
+          paymasterDetails({ feeMode, timeBounds })
         )
       ).transaction_hash;
     } else {
@@ -383,8 +387,8 @@ export class CartridgeWallet extends BaseWallet {
     return this.controller;
   }
 
-  async disconnect(): Promise<void> {
-    this.clearCaches();
+  override async disconnect(): Promise<void> {
+    await super.disconnect();
     this.clearDeploymentCache();
     await this.controller.disconnect();
   }

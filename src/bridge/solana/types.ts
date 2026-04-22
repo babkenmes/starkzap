@@ -41,3 +41,5 @@ export type SolanaLayerSwapDepositFeeEstimation = {
   /** Estimated completion time (e.g. "00:02:00"). */
   avgCompletionTime: string;
 };
+
+export type SolanaWithdrawFeeEstimation = HyperlaneFeeEstimate;

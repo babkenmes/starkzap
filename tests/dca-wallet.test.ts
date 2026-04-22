@@ -96,13 +96,11 @@ class TestWallet extends BaseWallet {
     defaultDcaProvider?: DcaProvider,
     defaultSwapProvider?: SwapProvider
   ) {
-    super(
-      fromAddress("0xCAFE"),
-      undefined,
+    super({
+      address: fromAddress("0xCAFE"),
       defaultSwapProvider,
-      undefined,
-      defaultDcaProvider
-    );
+      defaultDcaProvider,
+    });
     this.executeSpy.mockResolvedValue({ hash: "0xtx" } as Tx);
   }
 
@@ -159,7 +157,7 @@ describe("BaseWallet DCA abstraction", () => {
   it("executes provider create calls with options", async () => {
     const provider = createDcaProvider();
     const wallet = new TestWallet(provider);
-    const options: ExecuteOptions = { feeMode: "sponsored" };
+    const options: ExecuteOptions = { feeMode: { type: "paymaster" } };
 
     const tx = await wallet.dca().create(
       {

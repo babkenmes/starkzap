@@ -10,7 +10,7 @@
  *   LAYERSWAP_API_KEY="your-key" npx vitest run tests/layerswap-bridge.test.ts
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BridgeTokenRepository } from "@/bridge";
+import { BridgeTokenRepository } from "@/bridge/tokens/repository";
 import { LayerSwapApi } from "@/bridge/ethereum/layerswap/LayerSwapApi";
 import { LayerSwapBridge } from "@/bridge/ethereum/layerswap/LayerSwapBridge";
 import {

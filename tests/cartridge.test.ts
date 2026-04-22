@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CartridgeWallet } from "@/wallet/cartridge";
-import { ChainId } from "@/types";
+import { ChainId, fromAddress } from "@/types";
 
 const { MockController, mockToSessionPolicies } = vi.hoisted(() => {
   class ControllerMock {
@@ -152,7 +152,7 @@ describe("CartridgeWallet", () => {
 
     it("should accept feeMode and timeBounds options", async () => {
       const wallet = await CartridgeWallet.create({
-        feeMode: "sponsored",
+        feeMode: { type: "paymaster" },
         timeBounds: { executeBefore: 12345 },
       });
 
@@ -188,9 +188,9 @@ describe("CartridgeWallet", () => {
 
     it("should reject unsupported deploy options", async () => {
       const wallet = await CartridgeWallet.create();
-      await expect(wallet.deploy({ feeMode: "sponsored" })).rejects.toThrow(
-        "does not support DeployOptions overrides"
-      );
+      await expect(
+        wallet.deploy({ feeMode: { type: "paymaster" } })
+      ).rejects.toThrow("does not support DeployOptions overrides");
     });
   });
 
@@ -212,7 +212,7 @@ describe("CartridgeWallet", () => {
 
     it("should use paymaster for sponsored mode", async () => {
       const wallet = await CartridgeWallet.create({
-        feeMode: "sponsored",
+        feeMode: { type: "paymaster" },
       });
       const calls = [
         {
@@ -229,7 +229,7 @@ describe("CartridgeWallet", () => {
 
     it("should not pre-deploy before sponsored execution", async () => {
       const wallet = await CartridgeWallet.create({
-        feeMode: "sponsored",
+        feeMode: { type: "paymaster" },
       });
       const calls = [
         {
@@ -296,6 +296,39 @@ describe("CartridgeWallet", () => {
 
       expect(controller.keychain.deploy).not.toHaveBeenCalled();
       expect(account.execute).not.toHaveBeenCalled();
+    });
+
+    it("should route to paymaster when gasToken is set via feeMode", async () => {
+      const wallet = await CartridgeWallet.create();
+      const calls = [
+        {
+          contractAddress: "0x123",
+          entrypoint: "transfer",
+          calldata: ["0x456", "100"],
+        },
+      ];
+
+      const tx = await wallet.execute(calls, {
+        feeMode: {
+          type: "paymaster",
+          gasToken: fromAddress("0x053c91253bc9"),
+        },
+      });
+
+      const account = wallet.getAccount() as unknown as {
+        executePaymasterTransaction: ReturnType<typeof vi.fn>;
+      };
+
+      expect(tx.hash).toBe("0xsponsored");
+      expect(account.executePaymasterTransaction).toHaveBeenCalledTimes(1);
+      expect(account.executePaymasterTransaction).toHaveBeenCalledWith(
+        calls,
+        expect.objectContaining({
+          feeMode: expect.objectContaining({
+            mode: "default",
+          }),
+        })
+      );
     });
   });
 

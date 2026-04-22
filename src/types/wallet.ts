@@ -65,10 +65,21 @@ export interface AccountConfig {
 
 /**
  * How transaction fees are paid.
- * - `"sponsored"`: Paymaster covers gas
- * - `"user_pays"`: User's account pays gas in ETH/STRK
+ *
+ * - `"user_pays"` — User's account pays gas in ETH/STRK
+ * - `{ type: "paymaster" }` — Paymaster covers gas (sponsored)
+ * - `{ type: "paymaster", gasToken: "0x..." }` — Pay gas via ERC-20 through paymaster
+ * - `"sponsored"` — *(deprecated)* Alias for `{ type: "paymaster" }`
  */
-export type FeeMode = "sponsored" | "user_pays";
+export type FeeMode =
+  | "user_pays"
+  | { type: "paymaster"; gasToken?: Address }
+  | DeprecatedSponsoredFeeMode;
+
+/**
+ * @deprecated Use `{ type: "paymaster" }` instead.
+ */
+type DeprecatedSponsoredFeeMode = "sponsored";
 
 // ─── Provider Options ────────────────────────────────────────────────────────
 
@@ -109,7 +120,7 @@ export interface ProviderOptions {
  * // Sponsored via AVNU paymaster
  * await sdk.connectWallet({
  *   account: { signer: new StarkSigner(privateKey) },
- *   feeMode: "sponsored",
+ *   feeMode: { type: "paymaster" },
  * });
  * ```
  */
@@ -154,7 +165,7 @@ export interface ProgressEvent {
  * ```ts
  * await wallet.ensureReady({
  *   deploy: "if_needed",
- *   feeMode: "sponsored",
+ *   feeMode: { type: "paymaster" },
  *   onProgress: (e) => console.log(e.step)
  * });
  * ```
@@ -168,25 +179,25 @@ export interface EnsureReadyOptions {
   onProgress?: (event: ProgressEvent) => void;
 }
 
-// ─── Deploy ──────────────────────────────────────────────────────────────────
+// ─── Transaction Fee Options ─────────────────────────────────────────────────
 
-/** Options for `wallet.deploy()` */
-export interface DeployOptions {
+/** Common fee options shared by deploy and execute operations. */
+interface TransactionFeeOptions {
   /** How fees are paid (default: "user_pays") */
-  feeMode?: FeeMode;
-  /** Optional time bounds for paymaster-sponsored deployment */
-  timeBounds?: PaymasterTimeBounds;
-}
-
-// ─── Execute ─────────────────────────────────────────────────────────────────
-
-/** Options for `wallet.execute()` */
-export interface ExecuteOptions {
-  /** How fees are paid */
   feeMode?: FeeMode;
   /** Optional time bounds for paymaster transactions */
   timeBounds?: PaymasterTimeBounds;
 }
+
+// ─── Deploy ──────────────────────────────────────────────────────────────────
+
+/** Options for `wallet.deploy()` */
+export type DeployOptions = TransactionFeeOptions;
+
+// ─── Execute ─────────────────────────────────────────────────────────────────
+
+/** Options for `wallet.execute()` */
+export type ExecuteOptions = TransactionFeeOptions;
 
 // ─── Preflight ───────────────────────────────────────────────────────────────
 
@@ -200,8 +211,12 @@ export interface PreflightOptions {
   /**
    * Fee mode used for preflight assumptions.
    *
-   * When `"sponsored"` and the account is undeployed, preflight returns `{ ok: true }`
+   * When using a paymaster mode (`{ type: "paymaster" }` — with or without
+   * `gasToken`) and the account is undeployed, preflight returns `{ ok: true }`
    * because the paymaster path can deploy + execute atomically.
+   *
+   * The `gasToken` field only affects which token is used for fee payment;
+   * it does not change the preflight deployment decision.
    */
   feeMode?: FeeMode;
 }

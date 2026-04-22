@@ -11,6 +11,7 @@ import type {
   LendingRepayRequest,
   LendingWithdrawRequest,
 } from "@/lending";
+import type { TrovesDepositParams, TrovesWithdrawParams } from "@/troves";
 import type {
   Address,
   Amount,
@@ -315,6 +316,22 @@ export class TxBuilder {
       "cancel",
       this.wallet.dca().prepareCancel(request)
     );
+  }
+
+  /**
+   * Add a Troves strategy deposit operation.
+   */
+  trovesDeposit(params: TrovesDepositParams): this {
+    this.queueAsyncCalls(this.wallet.troves().populateDeposit(params));
+    return this;
+  }
+
+  /**
+   * Add a Troves strategy withdraw operation.
+   */
+  trovesWithdraw(params: TrovesWithdrawParams): this {
+    this.queueAsyncCalls(this.wallet.troves().populateWithdraw(params));
+    return this;
   }
 
   /**

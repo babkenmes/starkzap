@@ -1,4 +1,4 @@
-import { assertSafeHttpUrl } from "@/utils";
+import { assertSafeHttpUrl, resolveFetch } from "@/utils";
 import {
   type EthereumBridgeProtocol,
   type SolanaBridgeProtocol,
@@ -15,6 +15,7 @@ import { loadEthers } from "@/connect/ethersRuntime";
 import { fromEthereumAddress } from "@/connect/ethersRuntime";
 import { loadSolanaWeb3 } from "@/connect/solanaWeb3Runtime";
 import { fromSolanaAddress } from "@/types/solanaAddress";
+import { type StarkZapLogger, NOOP_LOGGER } from "@/logger";
 
 export type BridgeTokenApiEnv = "mainnet" | "testnet";
 
@@ -28,6 +29,7 @@ export interface BridgeTokenRepositoryOptions {
   cacheTtlMs?: number;
   fetchFn?: typeof fetch;
   now?: () => number;
+  logger?: StarkZapLogger;
 }
 
 interface CacheEntry {
@@ -52,6 +54,7 @@ interface BridgeTokenApiRecord {
   l2_bridge_address?: string;
   l2_fee_token_address?: string;
   bitcoin_runes_id?: string;
+  AW_support?: boolean;
 }
 
 const DEFAULT_ENV: BridgeTokenApiEnv = "mainnet";
@@ -196,6 +199,7 @@ function parseToken(
       ),
       starknetAddress: fromAddress(requiredString(token, "l2_token_address")),
       starknetBridge: fromAddress(requiredString(token, "l2_bridge_address")),
+      supportsAutoWithdraw: token.AW_support === true,
       ...(coingeckoId ? { coingeckoId } : {}),
     });
   }
@@ -253,6 +257,7 @@ export class BridgeTokenRepository {
   private readonly cacheTtlMs: number;
   private readonly fetchFn: typeof fetch;
   private readonly now: () => number;
+  private readonly logger: StarkZapLogger;
   private readonly cache = new Map<string, CacheEntry>();
   private readonly inflight = new Map<string, Promise<BridgeToken[]>>();
 
@@ -267,17 +272,9 @@ export class BridgeTokenRepository {
       throw new Error("cacheTtlMs must be a positive finite number");
     }
 
-    if (options.fetchFn) {
-      this.fetchFn = options.fetchFn;
-    } else if (typeof globalThis.fetch === "function") {
-      this.fetchFn = globalThis.fetch.bind(globalThis) as typeof fetch;
-    } else {
-      throw new Error(
-        "No fetch implementation available. Provide fetchFn in BridgeTokenRepositoryOptions."
-      );
-    }
-
+    this.fetchFn = resolveFetch(options.fetchFn);
     this.now = options.now ?? Date.now;
+    this.logger = options.logger ?? NOOP_LOGGER;
   }
 
   clearCache(): void {
@@ -360,7 +357,7 @@ export class BridgeTokenRepository {
             throw error;
           }
           unavailableChains.add(ExternalChain.ETHEREUM);
-          console.warn(
+          this.logger.warn(
             '[starkzap] Skipping ethereum bridge tokens because optional peer dependency "ethers" is not installed.',
             error
           );
@@ -379,7 +376,7 @@ export class BridgeTokenRepository {
             throw error;
           }
           unavailableChains.add(ExternalChain.SOLANA);
-          console.warn(
+          this.logger.warn(
             '[starkzap] Skipping solana bridge tokens because optional peer dependency "@solana/web3.js" is not installed.',
             error
           );
@@ -414,7 +411,7 @@ export class BridgeTokenRepository {
           if (isExplicitChainRequest) {
             throw e;
           }
-          console.warn(`Ignoring token ${token.symbol} due to`, e);
+          this.logger.warn(`Ignoring token ${token.symbol} due to`, e);
           return null;
         }
       })

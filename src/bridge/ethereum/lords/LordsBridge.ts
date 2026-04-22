@@ -1,21 +1,37 @@
 import { CanonicalEthereumBridge } from "@/bridge/ethereum/canonical/CanonicalEthereumBridge";
 import { ethereumAddress } from "@/bridge/ethereum/EtherToken";
 import type { EthereumTransactionDetails } from "@/bridge/ethereum/types";
-import type { Address } from "@/types";
+import type { Address, ExternalAddress } from "@/types";
 import { Amount, EthereumBridgeToken } from "@/types";
 import type { EthereumWalletConfig } from "@/bridge/ethereum/types";
 import type { WalletInterface } from "@/wallet";
-import { RPC, uint256 } from "starknet";
+import { type Call, CallData, RPC, uint256 } from "starknet";
 import { FeeErrorCause } from "@/types/errors";
 import LORDS_BRIDGE_ABI from "@/abi/ethereum/lordsBridge.json";
+import { AutoWithdrawFeesHandler } from "@/bridge/utils/auto-withdraw-fees-handler";
+import type { StarkZapLogger } from "@/logger";
 
 export class LordsBridge extends CanonicalEthereumBridge {
   constructor(
     bridgeToken: EthereumBridgeToken,
     config: EthereumWalletConfig,
-    starknetWallet: WalletInterface
+    starknetWallet: WalletInterface,
+    autoWithdrawFeesHandler: AutoWithdrawFeesHandler,
+    logger: StarkZapLogger
   ) {
-    super(bridgeToken, config, starknetWallet, LORDS_BRIDGE_ABI);
+    if (bridgeToken.id !== "lords") {
+      throw new Error(
+        `LordsBridge must be instantiated with the LORDS token (got "${bridgeToken.id}").`
+      );
+    }
+    super(
+      bridgeToken,
+      config,
+      starknetWallet,
+      autoWithdrawFeesHandler,
+      logger,
+      LORDS_BRIDGE_ABI
+    );
   }
 
   /**
@@ -88,5 +104,42 @@ export class LordsBridge extends CanonicalEthereumBridge {
     _amount: Amount
   ): Promise<Amount> {
     return this.ethAmount(0n);
+  }
+
+  /**
+   * The LORDS L2 bridge uses a single-token `initiate_withdrawal` entrypoint
+   * with calldata `[l1Recipient, amount_low, amount_high]` — no token address
+   * prefix, unlike the canonical `initiate_token_withdraw`.
+   */
+  protected override buildInitiateWithdrawCall(
+    recipient: string,
+    amount: Amount
+  ): Call {
+    return {
+      contractAddress: this.bridgeToken.starknetBridge.toString(),
+      entrypoint: "initiate_withdrawal",
+      calldata: CallData.compile({
+        l1Recipient: recipient,
+        amount: uint256.bnToUint256(amount.toBase()),
+      }),
+    };
+  }
+
+  /**
+   * The LORDS L1 bridge uses `withdraw(uint256 amount, address recipient)`
+   * instead of the canonical `withdraw(address token, uint256 amount, address recipient)`.
+   * The token address is implicit (one bridge per token).
+   */
+  protected override async buildCompleteWithdrawCall(
+    recipient: ExternalAddress,
+    amount: Amount
+  ): Promise<EthereumTransactionDetails> {
+    return {
+      method: "withdraw(uint256,address)",
+      args: [amount.toBase().toString(), recipient.toString()],
+      transaction: {
+        from: await this.config.signer.getAddress(),
+      },
+    };
   }
 }

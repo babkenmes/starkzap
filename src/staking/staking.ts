@@ -1,5 +1,4 @@
 import {
-  type BigNumberish,
   type Call,
   Contract,
   type ProviderOrAccount,
@@ -24,6 +23,7 @@ import type { WalletInterface } from "@/wallet";
 import type { Tx } from "@/tx";
 import type { Pool, PoolMember } from "@/types/pool";
 import { groupBy } from "@/utils";
+import type { ClaimableStaking } from "@/staking/interface";
 
 const DEFAULT_FROM_POOL_TIMEOUT_MS = 20_000;
 
@@ -57,7 +57,7 @@ interface FromPoolOptions {
  * }
  * ```
  */
-export class Staking {
+export class Staking implements ClaimableStaking {
   private readonly pool: TypedContractV2<typeof POOL_ABI>;
   private readonly token: Token;
   private readonly provider: RpcProvider;
@@ -199,7 +199,7 @@ export class Staking {
    * ```
    */
   async getPosition(
-    walletOrAddress: WalletInterface | Address | BigNumberish
+    walletOrAddress: WalletInterface | Address
   ): Promise<PoolMember | null> {
     const walletAddress = resolveWalletAddress(walletOrAddress);
     const memberInfo = await this.pool.get_pool_member_info_v1(walletAddress);

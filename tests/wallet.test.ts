@@ -122,7 +122,7 @@ describe("Wallet", () => {
       const signer = new StarkSigner(privateKey);
       const wallet = await sdk.connectWallet({
         account: { signer },
-        feeMode: "sponsored",
+        feeMode: { type: "paymaster" },
         timeBounds: {
           executeBefore: Math.floor(Date.now() / 1000) + 3600,
         },
@@ -377,6 +377,83 @@ describe("Wallet", () => {
     });
   });
 
+  describe("execute", () => {
+    it("should route to paymaster when gasToken is set via feeMode", async () => {
+      const signer = new StarkSigner(testPrivateKeys.key1);
+      const wallet = await sdk.connectWallet({
+        account: { signer },
+      });
+
+      const account = wallet.getAccount();
+      vi.spyOn(wallet, "isDeployed").mockResolvedValue(true);
+      const paymasterSpy = vi
+        .spyOn(account, "executePaymasterTransaction")
+        .mockResolvedValue({ transaction_hash: "0xgas" });
+
+      const tx = await wallet.execute(
+        [
+          {
+            contractAddress: "0x123",
+            entrypoint: "transfer",
+            calldata: [],
+          },
+        ],
+        {
+          feeMode: {
+            type: "paymaster",
+            gasToken: fromAddress("0x053c91253bc9"),
+          },
+        }
+      );
+
+      expect(tx.hash).toBe("0xgas");
+      expect(paymasterSpy).toHaveBeenCalledTimes(1);
+      expect(paymasterSpy).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          feeMode: expect.objectContaining({
+            mode: "default",
+          }),
+        })
+      );
+    });
+
+    it('should route deprecated "sponsored" to paymaster path', async () => {
+      const signer = new StarkSigner(testPrivateKeys.key1);
+      const wallet = await sdk.connectWallet({
+        account: { signer },
+      });
+
+      const account = wallet.getAccount();
+      vi.spyOn(wallet, "isDeployed").mockResolvedValue(true);
+      const paymasterSpy = vi
+        .spyOn(account, "executePaymasterTransaction")
+        .mockResolvedValue({ transaction_hash: "0xsponsored" });
+
+      const tx = await wallet.execute(
+        [
+          {
+            contractAddress: "0x123",
+            entrypoint: "transfer",
+            calldata: [],
+          },
+        ],
+        { feeMode: "sponsored" }
+      );
+
+      expect(tx.hash).toBe("0xsponsored");
+      expect(paymasterSpy).toHaveBeenCalledTimes(1);
+      expect(paymasterSpy).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          feeMode: expect.objectContaining({
+            mode: "sponsored",
+          }),
+        })
+      );
+    });
+  });
+
   describe("preflight", () => {
     it("should fail preflight for undeployed account", async () => {
       const signer = new StarkSigner(testPrivateKeys.random());
@@ -406,7 +483,7 @@ describe("Wallet", () => {
       const signer = new StarkSigner(testPrivateKeys.random());
       const wallet = await sdk.connectWallet({
         account: { signer },
-        feeMode: "sponsored",
+        feeMode: { type: "paymaster" },
       });
       vi.spyOn(wallet, "isDeployed").mockResolvedValue(false);
       const simulateSpy = vi.spyOn(wallet.getAccount(), "simulateTransaction");
@@ -436,7 +513,7 @@ describe("Wallet", () => {
       const signer = new StarkSigner(testPrivateKeys.random());
       const wallet = await paymasterSdk.connectWallet({
         account: { signer },
-        feeMode: "sponsored",
+        feeMode: { type: "paymaster" },
       });
       vi.spyOn(wallet, "isDeployed").mockResolvedValue(false);
       const simulateSpy = vi.spyOn(wallet.getAccount(), "simulateTransaction");
@@ -449,6 +526,32 @@ describe("Wallet", () => {
             calldata: [],
           },
         ],
+      });
+
+      expect(result.ok).toBe(true);
+      expect(simulateSpy).not.toHaveBeenCalled();
+    });
+
+    it("should return ok for undeployed account with paymaster gasToken", async () => {
+      const signer = new StarkSigner(testPrivateKeys.random());
+      const wallet = await sdk.connectWallet({
+        account: { signer },
+      });
+      vi.spyOn(wallet, "isDeployed").mockResolvedValue(false);
+      const simulateSpy = vi.spyOn(wallet.getAccount(), "simulateTransaction");
+
+      const result = await wallet.preflight({
+        calls: [
+          {
+            contractAddress: "0x123",
+            entrypoint: "transfer",
+            calldata: [],
+          },
+        ],
+        feeMode: {
+          type: "paymaster",
+          gasToken: fromAddress("0x053c91253bc9"),
+        },
       });
 
       expect(result.ok).toBe(true);

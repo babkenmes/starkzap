@@ -25,6 +25,7 @@ import {
   type WalletInterface,
   type AccountClassConfig,
   type SwapProvider,
+  type Logger,
   type Token,
   fromAddress,
 } from "starkzap";
@@ -35,6 +36,8 @@ import {
   initializeAppKit,
   formatFeeEstimate,
 } from "./bridge";
+import { BridgeTransferStatus, DepositState, WithdrawalState } from "starkzap";
+import type { StoredBridgeTx } from "./bridge/tx-storage";
 import { getDcaProviders } from "./dca";
 import {
   buildFallbackWebVesuMarkets,
@@ -62,9 +65,16 @@ const MAINNET_NETWORK: AppNetwork = "mainnet";
 const SEPOLIA_NETWORK: AppNetwork = "sepolia";
 const NETWORK_QUERY_PARAM = "network";
 const NETWORK_STORAGE_KEY = "starkzap:web:network";
+const ALCHEMY_API_KEY = import.meta.env.VITE_ALCHEMY_API_KEY as
+  | string
+  | undefined;
 const DEFAULT_RPC_URLS: Record<AppNetwork, string> = {
-  [MAINNET_NETWORK]: "https://api.cartridge.gg/x/starknet/mainnet/rpc/v0_9",
-  [SEPOLIA_NETWORK]: "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_9",
+  [MAINNET_NETWORK]: ALCHEMY_API_KEY
+    ? `https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_10/${ALCHEMY_API_KEY}`
+    : "https://api.cartridge.gg/x/starknet/mainnet/rpc/v0_9",
+  [SEPOLIA_NETWORK]: ALCHEMY_API_KEY
+    ? `https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_10/${ALCHEMY_API_KEY}`
+    : "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_9",
 };
 
 function normalizeNetwork(value: string | null | undefined): AppNetwork | null {
@@ -149,9 +159,6 @@ const DUMMY_POLICY = {
 };
 const SDK_CHAIN_ID =
   NETWORK === MAINNET_NETWORK ? ChainId.MAINNET : ChainId.SEPOLIA;
-const ALCHEMY_API_KEY = import.meta.env.VITE_ALCHEMY_API_KEY as
-  | string
-  | undefined;
 const OFT_PUBLIC_KEY = import.meta.env.VITE_OFT_PUBLIC_KEY as
   | string
   | undefined;
@@ -208,10 +215,43 @@ const presetTokens = Object.values(getPresets(SDK_CHAIN_ID)).sort((a, b) =>
 );
 const dcaTokens = getDcaDemoTokens();
 
+// SDK logger that pipes into the Activity Log UI
+let sdkLogsVisible = false;
+const sdkLogEntries: HTMLElement[] = [];
+
+const sdkLogger: Logger = {
+  debug: (msg, ...args) => appendSdkLog("debug", msg, args),
+  info: (msg, ...args) => appendSdkLog("info", msg, args),
+  warn: (msg, ...args) => appendSdkLog("warn", msg, args),
+  error: (msg, ...args) => appendSdkLog("error", msg, args),
+};
+
+function appendSdkLog(level: string, message: string, args: unknown[]): void {
+  const container = document.getElementById("log");
+  if (!container) return;
+  const time = new Date().toLocaleTimeString("en-US", { hour12: false });
+  const entry = document.createElement("div");
+  entry.className = `log-entry sdk${sdkLogsVisible ? "" : " hidden"}`;
+  const timeSpan = document.createElement("span");
+  timeSpan.className = "log-time";
+  timeSpan.textContent = time;
+  entry.appendChild(timeSpan);
+  const detail = args.length ? ` ${args.map(String).join(" ")}` : "";
+  entry.appendChild(
+    document.createTextNode(`[starkzap][${level}] ${message}${detail}`)
+  );
+  container.appendChild(entry);
+  sdkLogEntries.push(entry);
+  if (sdkLogsVisible) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
 // SDK instance
 const sdk = new StarkZap({
   rpcUrl: RPC_URL,
   chainId: SDK_CHAIN_ID,
+  logging: { logger: sdkLogger },
   ...(ALCHEMY_API_KEY || OFT_PUBLIC_KEY || LAYERSWAP_API_KEY
     ? {
         bridging: {
@@ -460,6 +500,12 @@ const bridgeFastTransferRow = document.getElementById(
 const bridgeFastTransferInput = document.getElementById(
   "bridge-fast-transfer"
 ) as HTMLInputElement;
+const bridgeAutoWithdrawRow = document.getElementById(
+  "bridge-auto-withdraw-row"
+)!;
+const bridgeAutoWithdrawInput = document.getElementById(
+  "bridge-auto-withdraw"
+) as HTMLInputElement;
 const bridgeFeesSection = document.getElementById("bridge-fees-section")!;
 const bridgeFeesEl = document.getElementById("bridge-fees")!;
 const bridgeAmountInput = document.getElementById(
@@ -467,6 +513,11 @@ const bridgeAmountInput = document.getElementById(
 ) as HTMLInputElement;
 const btnBridgeDeposit = document.getElementById(
   "btn-bridge-deposit"
+) as HTMLButtonElement;
+const bridgeTxHistory = document.getElementById("bridge-tx-history")!;
+const bridgeTxList = document.getElementById("bridge-tx-list")!;
+const btnBridgeTxClearCompleted = document.getElementById(
+  "btn-bridge-tx-clear-completed"
 ) as HTMLButtonElement;
 
 // Reown AppKit + Bridge Controller
@@ -864,8 +915,12 @@ function renderSwapQuote(params: {
 
   swapQuoteEl.innerHTML = `
     <div class="quote-row"><span class="quote-label">Source</span><span class="quote-value">${params.providerId.toUpperCase()}</span></div>
-    <div class="quote-row"><span class="quote-label">Amount In</span><span class="quote-value">${params.amountIn.toFormatted(true)}</span></div>
-    <div class="quote-row"><span class="quote-label">Amount Out</span><span class="quote-value">${amountOut.toFormatted(true)}</span></div>
+    <div class="quote-row"><span class="quote-label">Amount In</span><span class="quote-value">${params.amountIn.toFormatted(
+      true
+    )}</span></div>
+    <div class="quote-row"><span class="quote-label">Amount Out</span><span class="quote-value">${amountOut.toFormatted(
+      true
+    )}</span></div>
     <div class="quote-row"><span class="quote-label">Price Impact</span><span class="quote-value">${priceImpactText}</span></div>
     <div class="quote-row"><span class="quote-label">Route Calls</span><span class="quote-value">${routeCalls}</span></div>
   `;
@@ -1206,7 +1261,9 @@ async function cancelDcaOrder(
     }
 
     log(
-      `Cancelling ${getDcaBackendLabel(order.providerId)} DCA order ${truncateAddress(order.orderAddress)}...`,
+      `Cancelling ${getDcaBackendLabel(
+        order.providerId
+      )} DCA order ${truncateAddress(order.orderAddress)}...`,
       "info"
     );
     const sponsor = dcaSponsoredInput.checked;
@@ -1255,16 +1312,24 @@ function renderDcaOrders(orders: DcaOrder[]): void {
     const orderHeaderInfo = document.createElement("div");
     const orderTitle = document.createElement("div");
     orderTitle.className = "order-title";
-    orderTitle.textContent = `${describeTokenAddress(order.sellTokenAddress)} -> ${describeTokenAddress(order.buyTokenAddress)}`;
+    orderTitle.textContent = `${describeTokenAddress(
+      order.sellTokenAddress
+    )} -> ${describeTokenAddress(order.buyTokenAddress)}`;
 
     const orderSubtitle = document.createElement("div");
     orderSubtitle.className = "order-subtitle";
-    orderSubtitle.textContent = `${getDcaBackendLabel(order.providerId)} · ${truncateAddress(order.orderAddress)} · ${order.timestamp.toLocaleString()}`;
+    orderSubtitle.textContent = `${getDcaBackendLabel(
+      order.providerId
+    )} · ${truncateAddress(
+      order.orderAddress
+    )} · ${order.timestamp.toLocaleString()}`;
 
     orderHeaderInfo.append(orderTitle, orderSubtitle);
 
     const statusBadge = document.createElement("span");
-    statusBadge.className = `status-badge ${getDcaStatusBadgeClass(order.status)}`;
+    statusBadge.className = `status-badge ${getDcaStatusBadgeClass(
+      order.status
+    )}`;
     statusBadge.textContent = order.status;
 
     orderHeader.append(orderHeaderInfo, statusBadge);
@@ -1577,7 +1642,9 @@ async function refreshDcaOrders(silent = false): Promise<void> {
     renderDcaOrders(page.content);
     if (!silent) {
       log(
-        `Loaded ${page.content.length} ${currentProvider.toUpperCase()} DCA orders`,
+        `Loaded ${
+          page.content.length
+        } ${currentProvider.toUpperCase()} DCA orders`,
         "success"
       );
     }
@@ -1615,6 +1682,159 @@ function log(
   entry.appendChild(document.createTextNode(message));
   logContainer.appendChild(entry);
   logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+// Bridge transaction history rendering
+function statusLabel(status: string | undefined): string {
+  if (!status) return "pending";
+  const map: Record<string, string> = {
+    [BridgeTransferStatus.SUBMITTED_ON_L1]: "Submitted (L1)",
+    [BridgeTransferStatus.CONFIRMED_ON_L1]: "Confirmed (L1)",
+    [BridgeTransferStatus.COMPLETED_ON_L1]: "Completed (L1) ✓",
+    [BridgeTransferStatus.NOT_SUBMITTED_ON_L1]: "Not on L1",
+    [BridgeTransferStatus.SUBMITTED_ON_STARKNET]: "Submitted (Starknet)",
+    [BridgeTransferStatus.CONFIRMED_ON_STARKNET]: "Confirmed (Starknet)",
+    [BridgeTransferStatus.COMPLETED_ON_STARKNET]: "Completed (Starknet) ✓",
+    [BridgeTransferStatus.NOT_SUBMITTED_ON_STARKNET]: "Not on Starknet",
+    [BridgeTransferStatus.ERROR]: "Error",
+  };
+  return map[status] ?? status;
+}
+
+function needsCompletionStep(tx: StoredBridgeTx): boolean {
+  if (tx.type !== "initiateWithdraw" || tx.autoWithdraw) {
+    return false;
+  }
+  if (tx.externalTxHash) {
+    // completion already submitted
+    return false;
+  }
+  return tx.withdrawalState === WithdrawalState.READY_TO_CLAIM;
+}
+
+function renderBridgeTxHistory(records: Readonly<StoredBridgeTx[]>): void {
+  if (records.length === 0) {
+    bridgeTxHistory.classList.add("hidden");
+    return;
+  }
+
+  bridgeTxHistory.classList.remove("hidden");
+  bridgeTxList.innerHTML = "";
+
+  for (const tx of records) {
+    const item = document.createElement("div");
+    const isCompleted =
+      tx.withdrawalState === WithdrawalState.COMPLETED ||
+      tx.depositState === DepositState.COMPLETED;
+    item.className = `bridge-tx-item${isCompleted ? " completed" : ""}`;
+    item.dataset.txId = tx.id;
+
+    const isDeposit = tx.type === "deposit";
+    const tagClass = isDeposit ? "deposit" : "withdraw";
+    const typeLabel = isDeposit ? "Deposit" : "Withdraw";
+
+    // For deposits: primary = external (L1), secondary = Starknet.
+    // For withdrawals: primary = Starknet, secondary = external (L1 completion).
+    const primaryHash = isDeposit ? tx.externalTxHash : tx.snTxHash;
+    const secondaryHash = isDeposit ? tx.snTxHash : tx.externalTxHash;
+    const primaryLabel = isDeposit ? "L1" : "SN";
+    const secondaryLabel = isDeposit ? "SN" : "L1";
+
+    const checkedAt = tx.statusCheckedAt
+      ? `Checked ${Math.round(
+          (Date.now() - tx.statusCheckedAt) / 60000
+        )} min ago`
+      : "Not checked yet";
+
+    function hashChip(hash: string, label: string, cls: string): string {
+      const short = `${hash.slice(0, 8)}...${hash.slice(-6)}`;
+      return `<span class="bridge-tx-hash ${cls}" title="${hash}">${label}: ${short}<button class="btn-copy-hash" data-hash="${hash}" title="Copy full hash">⎘</button></span>`;
+    }
+
+    item.innerHTML = `
+      <div class="bridge-tx-meta">
+        <span class="bridge-tx-tag ${tagClass}">${typeLabel}</span>
+        <span class="bridge-tx-amount">${formatRawAmount(
+          tx.amountRaw,
+          tx.tokenDecimals,
+          tx.tokenSymbol
+        )}</span>
+        ${primaryHash ? hashChip(primaryHash, primaryLabel, "primary") : ""}
+        ${
+          secondaryHash
+            ? hashChip(secondaryHash, secondaryLabel, "secondary")
+            : ""
+        }
+      </div>
+      <div class="bridge-tx-status">${statusLabel(
+        tx.lastStatus
+      )} · ${checkedAt}</div>
+      <div class="bridge-tx-actions">
+        <button class="btn-check-status">Check Status</button>
+        ${
+          needsCompletionStep(tx)
+            ? `<button class="btn-complete">Complete Withdrawal</button>`
+            : ""
+        }
+        <button class="btn-remove">✕</button>
+      </div>
+    `;
+
+    for (const btn of item.querySelectorAll<HTMLButtonElement>(
+      ".btn-copy-hash"
+    )) {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const target = e.currentTarget as HTMLButtonElement;
+        const hash = target.dataset.hash!;
+        void navigator.clipboard.writeText(hash).then(() => {
+          target.textContent = "✓";
+          setTimeout(() => {
+            target.textContent = "⎘";
+          }, 1500);
+        });
+      });
+    }
+
+    item
+      .querySelector(".btn-check-status")!
+      .addEventListener("click", () => bridgeController?.checkTxStatus(tx.id));
+
+    if (needsCompletionStep(tx)) {
+      item
+        .querySelector(".btn-complete")!
+        .addEventListener("click", () =>
+          bridgeController?.completeBridgeTx(tx.id)
+        );
+    }
+
+    item
+      .querySelector(".btn-remove")!
+      .addEventListener("click", () => bridgeController?.removeTxRecord(tx.id));
+
+    bridgeTxList.appendChild(item);
+  }
+}
+
+function formatRawAmount(
+  rawStr: string,
+  decimals: number,
+  symbol: string
+): string {
+  try {
+    const raw = BigInt(rawStr);
+    const divisor = BigInt(10 ** decimals);
+    const whole = raw / divisor;
+    const frac = raw % divisor;
+    const fracStr = frac
+      .toString()
+      .padStart(decimals, "0")
+      .replace(/0+$/, "")
+      .slice(0, 6);
+    return fracStr ? `${whole}.${fracStr} ${symbol}` : `${whole} ${symbol}`;
+  } catch {
+    return `? ${symbol}`;
+  }
 }
 
 // Bridge rendering
@@ -1710,8 +1930,19 @@ function renderBridge(): void {
     bridgeFastTransferRow.classList.add("hidden");
   }
 
+  // Auto-withdraw toggle (canonical Ethereum tokens that support it, from-starknet only)
+  if (
+    s.direction === "from-starknet" &&
+    bridgeController.tokenSupportsAutoWithdraw()
+  ) {
+    bridgeAutoWithdrawRow.classList.remove("hidden");
+    bridgeAutoWithdrawInput.checked = s.autoWithdraw;
+  } else {
+    bridgeAutoWithdrawRow.classList.add("hidden");
+  }
+
   // Fee estimate
-  if (s.direction === "to-starknet" && s.selectedToken) {
+  if (s.selectedToken) {
     bridgeFeesSection.classList.remove("hidden");
     if (s.feeLoading) {
       bridgeFeesEl.textContent = "Estimating...";
@@ -1724,19 +1955,31 @@ function renderBridge(): void {
     bridgeFeesSection.classList.add("hidden");
   }
 
-  // Deposit button
+  // Deposit / Withdraw button
   const hasAmount = bridgeAmountInput.value.trim().length > 0;
   const hasExternalWallet =
     (s.selectedToken?.chain === ExternalChain.SOLANA &&
       s.connectedSolWallet != null) ||
     (s.selectedToken?.chain !== ExternalChain.SOLANA &&
       s.connectedEthWallet != null);
-  const canDeposit =
-    s.direction === "to-starknet" &&
-    hasExternalWallet &&
-    s.selectedToken != null &&
-    hasAmount;
-  btnBridgeDeposit.disabled = !canDeposit;
+  if (s.direction === "to-starknet") {
+    btnBridgeDeposit.textContent = "Bridge Deposit";
+    btnBridgeDeposit.disabled = !(
+      hasExternalWallet &&
+      s.selectedToken != null &&
+      hasAmount
+    );
+  } else {
+    const isAutoWithdraw =
+      s.autoWithdraw && bridgeController.tokenSupportsAutoWithdraw();
+    btnBridgeDeposit.textContent = isAutoWithdraw
+      ? "Auto Withdraw"
+      : "Initiate Withdraw";
+    btnBridgeDeposit.disabled = !(s.selectedToken != null && hasAmount);
+  }
+
+  // Transaction history
+  renderBridgeTxHistory(bridgeController.getTxHistory());
 }
 
 // UI State
@@ -1795,7 +2038,9 @@ function showDisconnected() {
 }
 
 function setStatus(status: "deployed" | "not-deployed" | "checking") {
-  walletStatusEl.className = `status-badge status-${status === "not-deployed" ? "not-deployed" : status}`;
+  walletStatusEl.className = `status-badge status-${
+    status === "not-deployed" ? "not-deployed" : status
+  }`;
   walletStatusEl.textContent =
     status === "deployed"
       ? "Deployed"
@@ -2127,7 +2372,9 @@ async function fetchSwapQuote() {
       buildSwapInput();
 
     log(
-      `Fetching ${providerId.toUpperCase()} quote for ${amountIn.toUnit()} ${tokenIn.symbol} -> ${tokenOut.symbol}`,
+      `Fetching ${providerId.toUpperCase()} quote for ${amountIn.toUnit()} ${
+        tokenIn.symbol
+      } -> ${tokenOut.symbol}`,
       "info"
     );
 
@@ -2148,7 +2395,11 @@ async function fetchSwapQuote() {
       priceImpactBps: quote.priceImpactBps,
     });
     log(
-      `Quote received: ${Amount.fromRaw(quote.amountOutBase, tokenOut.decimals, tokenOut.symbol).toFormatted(true)}`,
+      `Quote received: ${Amount.fromRaw(
+        quote.amountOutBase,
+        tokenOut.decimals,
+        tokenOut.symbol
+      ).toFormatted(true)}`,
       "success"
     );
   } catch (err) {
@@ -2177,7 +2428,9 @@ async function submitSwap() {
     const sponsor = swapSponsoredInput.checked;
 
     log(
-      `Submitting ${providerId.toUpperCase()} swap ${amountIn.toUnit()} ${tokenIn.symbol} -> ${tokenOut.symbol}`,
+      `Submitting ${providerId.toUpperCase()} swap ${amountIn.toUnit()} ${
+        tokenIn.symbol
+      } -> ${tokenOut.symbol}`,
       "info"
     );
 
@@ -2522,7 +2775,9 @@ async function fetchDcaPreview() {
     } = buildDcaInput({ requirePreviewProvider: true });
 
     log(
-      `Previewing ${previewProviderId.toUpperCase()} DCA cycle ${sellAmountPerCycle.toUnit()} ${sellToken.symbol} -> ${buyToken.symbol}`,
+      `Previewing ${previewProviderId.toUpperCase()} DCA cycle ${sellAmountPerCycle.toUnit()} ${
+        sellToken.symbol
+      } -> ${buyToken.symbol}`,
       "info"
     );
 
@@ -2543,7 +2798,11 @@ async function fetchDcaPreview() {
       priceImpactBps: quote.priceImpactBps,
     });
     log(
-      `DCA cycle preview received: ${Amount.fromRaw(quote.amountOutBase, buyToken.decimals, buyToken.symbol).toFormatted(true)}`,
+      `DCA cycle preview received: ${Amount.fromRaw(
+        quote.amountOutBase,
+        buyToken.decimals,
+        buyToken.symbol
+      ).toFormatted(true)}`,
       "success"
     );
   } catch (err) {
@@ -2583,7 +2842,11 @@ async function createDcaOrder() {
       : "";
 
     log(
-      `Creating ${dcaProviderId.toUpperCase()} DCA order ${sellAmount.toUnit()} ${sellToken.symbol} total / ${sellAmountPerCycle.toUnit()} per cycle into ${buyToken.symbol} (${frequency}${previewSuffix})`,
+      `Creating ${dcaProviderId.toUpperCase()} DCA order ${sellAmount.toUnit()} ${
+        sellToken.symbol
+      } total / ${sellAmountPerCycle.toUnit()} per cycle into ${
+        buyToken.symbol
+      } (${frequency}${previewSuffix})`,
       "info"
     );
 
@@ -2826,15 +3089,26 @@ bridgeFastTransferInput.addEventListener("change", () => {
   bridgeController?.setFastTransfer(bridgeFastTransferInput.checked);
 });
 
+bridgeAutoWithdrawInput.addEventListener("change", () => {
+  bridgeController?.setAutoWithdraw(bridgeAutoWithdrawInput.checked);
+});
+
 bridgeAmountInput.addEventListener("input", () => {
   renderBridge();
 });
 
 btnBridgeDeposit.addEventListener("click", () => {
   const amount = bridgeAmountInput.value.trim();
-  if (amount && bridgeController) {
+  if (!amount || !bridgeController) return;
+  if (bridgeController.getState().direction === "to-starknet") {
     bridgeController.deposit(amount);
+  } else {
+    bridgeController.initiateWithdraw(amount);
   }
+});
+
+btnBridgeTxClearCompleted.addEventListener("click", () => {
+  bridgeController?.clearCompletedTxRecords();
 });
 
 // Subscribe to AppKit account and network changes.
@@ -3194,7 +3468,10 @@ function renderLendingDraft(): void {
     rows.push(
       createQuoteRow(
         "My Deposit",
-        `${Amount.fromRaw(earnPosition.collateral.amount, earnPosition.collateral.token).toFormatted(true)} ${supplyMarket.asset.symbol}`
+        `${Amount.fromRaw(
+          earnPosition.collateral.amount,
+          earnPosition.collateral.token
+        ).toFormatted(true)} ${supplyMarket.asset.symbol}`
       )
     );
   }
@@ -3203,14 +3480,20 @@ function renderLendingDraft(): void {
     rows.push(
       createQuoteRow(
         "My Collateral",
-        `${Amount.fromRaw(borrowPosition.collateral.amount, borrowPosition.collateral.token).toFormatted(true)} ${borrowPosition.collateral.token.symbol}`
+        `${Amount.fromRaw(
+          borrowPosition.collateral.amount,
+          borrowPosition.collateral.token
+        ).toFormatted(true)} ${borrowPosition.collateral.token.symbol}`
       )
     );
     if (borrowPosition.debt) {
       rows.push(
         createQuoteRow(
           "My Debt",
-          `${Amount.fromRaw(borrowPosition.debt.amount, borrowPosition.debt.token).toFormatted(true)} ${borrowPosition.debt.token.symbol}`
+          `${Amount.fromRaw(
+            borrowPosition.debt.amount,
+            borrowPosition.debt.token
+          ).toFormatted(true)} ${borrowPosition.debt.token.symbol}`
         )
       );
     }
@@ -3222,7 +3505,9 @@ function renderLendingDraft(): void {
       rows.push(
         createQuoteRow(
           "Borrow Limit",
-          `${Amount.fromRaw(draftMaxBorrowAmount, debtMarket.asset).toFormatted(true)} ${debtMarket.asset.symbol}`
+          `${Amount.fromRaw(draftMaxBorrowAmount, debtMarket.asset).toFormatted(
+            true
+          )} ${debtMarket.asset.symbol}`
         )
       );
     }
@@ -3232,7 +3517,9 @@ function renderLendingDraft(): void {
       rows.push(
         createQuoteRow(
           "Deposit Needed",
-          `${Amount.fromRaw(minimumDeposit, collateralMarket.asset).toFormatted(true)} ${collateralMarket.asset.symbol}`
+          `${Amount.fromRaw(minimumDeposit, collateralMarket.asset).toFormatted(
+            true
+          )} ${collateralMarket.asset.symbol}`
         )
       );
     }
@@ -3705,7 +3992,9 @@ async function lendingBorrow(
     });
 
     log(
-      `Borrowing ${amount.toUnit()} ${debtToken.symbol} with ${collateralToken.symbol} collateral...`,
+      `Borrowing ${amount.toUnit()} ${debtToken.symbol} with ${
+        collateralToken.symbol
+      } collateral...`,
       "info"
     );
     const tx = await wallet.lending().borrow(
@@ -3784,7 +4073,9 @@ async function lendingRepay(
 
     log(
       isCollateralOnlyRepay
-        ? `Withdrawing ${collateralAmount?.toUnit() ?? "0"} ${collateralToken.symbol} collateral...`
+        ? `Withdrawing ${collateralAmount?.toUnit() ?? "0"} ${
+            collateralToken.symbol
+          } collateral...`
         : `Repaying ${amount.toUnit()} ${debtToken.symbol}...`,
       "info"
     );
@@ -3915,7 +4206,9 @@ async function lendingMyPositions() {
       );
       const nextRows = [
         createQuoteRow(
-          `${p.type === "earn" ? "Deposit" : "Collateral"} (${p.pool.name ?? truncateAddress(p.pool.id)})`,
+          `${p.type === "earn" ? "Deposit" : "Collateral"} (${
+            p.pool.name ?? truncateAddress(p.pool.id)
+          })`,
           `${colFormatted} ${col.token.symbol}`
         ),
       ];
@@ -4044,7 +4337,9 @@ async function lendingHealthQuote() {
 
     const simStatus = quote.simulation.ok
       ? "✓ Would succeed"
-      : `✗ Would fail: ${quote.simulation.ok === false ? quote.simulation.reason : ""}`;
+      : `✗ Would fail: ${
+          quote.simulation.ok === false ? quote.simulation.reason : ""
+        }`;
 
     renderQuoteBox(lendingPositionEl, [
       createQuoteRow(
@@ -4181,6 +4476,20 @@ lendingBorrowPercentInput.addEventListener("input", () => {
 lendingUseEarnInput.addEventListener("change", () => {
   void refreshSelectedLendingContext({ silent: true });
   renderLendingDraft();
+});
+
+// SDK logs toggle
+const sdkLogsToggle = document.getElementById(
+  "sdk-logs-toggle"
+) as HTMLInputElement;
+sdkLogsToggle.addEventListener("change", () => {
+  sdkLogsVisible = sdkLogsToggle.checked;
+  for (const entry of sdkLogEntries) {
+    entry.classList.toggle("hidden", !sdkLogsVisible);
+  }
+  if (sdkLogsVisible) {
+    logContainer.scrollTop = logContainer.scrollHeight;
+  }
 });
 
 // Initial log

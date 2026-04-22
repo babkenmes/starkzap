@@ -17,6 +17,7 @@ import {
   type ExternalTransactionResponse,
 } from "@/types";
 import type { WalletInterface } from "@/wallet";
+import type { StarkZapLogger } from "@/logger";
 
 /**
  * LayerSwap bridge provider for cross-chain deposits via the LayerSwap API.
@@ -39,9 +40,10 @@ export class LayerSwapBridge extends EthereumBridge {
     config: EthereumWalletConfig,
     starknetWallet: WalletInterface,
     apiKey: string,
+    logger: StarkZapLogger,
     apiConfig?: Omit<LayerSwapApiConfig, "apiKey">
   ) {
-    super(bridgeToken, config, starknetWallet, []);
+    super(bridgeToken, config, starknetWallet, logger);
     this.api = new LayerSwapApi({ apiKey, ...apiConfig });
     const mainnet = starknetWallet.getChainId().isMainnet();
     this.sourceNetwork = mainnet ? "ETHEREUM_MAINNET" : "ETHEREUM_SEPOLIA";

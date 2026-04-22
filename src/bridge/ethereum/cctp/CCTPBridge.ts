@@ -2,21 +2,47 @@ import {
   type Address,
   Amount,
   type EthereumAddress,
+  EthereumBridgeToken,
+  type ExternalAddress,
   type ExternalTransactionResponse,
   fromAddress,
 } from "@/types";
-import type { BridgeDepositOptions } from "@/bridge/types/BridgeInterface";
-import type { CCTPDepositFeeEstimation } from "@/bridge";
+import type {
+  BridgeDepositOptions,
+  CCTPInitiateWithdrawBridgeOptions,
+  CompleteBridgeWithdrawOptions,
+  InitiateBridgeWithdrawOptions,
+} from "@/bridge/types/BridgeInterface";
+import type {
+  CCTPDepositFeeEstimation,
+  CCTPInitiateWithdrawFeeEstimation,
+  EthereumCompleteWithdrawFeeEstimation,
+  EthereumWalletConfig,
+} from "@/bridge";
 import { ERC20EthereumToken } from "@/bridge/ethereum/EtherToken";
 import { getAddress, Interface, type TransactionRequest } from "ethers";
 import { FeeErrorCause } from "@/types/errors";
 import { BridgeDirection, CCTPFees } from "@/bridge/ethereum/cctp/CCTPFees";
 import {
+  CCTP_COMPLETE_WITHDRAW_OPTIONS_ERROR_MESSAGE,
+  EMPTY_DESTINATION_CALLER,
+  ETHEREUM_DOMAIN_ID,
+  FALLBACK_COMPLETE_WITHDRAW_GAS,
+  getCircleApiBaseUrl,
   getFinalityThreshold,
+  getMessageTransmitter,
+  getTokenMessenger,
+  REATTESTATION_POLL_ATTEMPTS,
+  REATTESTATION_POLL_INTERVAL_MS,
+  REATTESTATION_SAFETY_BLOCK_THRESHOLD,
   STARKNET_DOMAIN_ID,
 } from "@/bridge/ethereum/cctp/constants";
 import { EthereumBridge } from "@/bridge/ethereum/EthereumBridge";
 import { fromEthereumAddress } from "@/connect/ethersRuntime";
+import type { Tx } from "@/tx";
+import { cairo, type Call, CallData, uint256 } from "starknet";
+import type { WalletInterface } from "@/wallet";
+import { type StarkZapLogger } from "@/logger";
 
 export class CCTPBridge extends EthereumBridge {
   private static readonly MAINNET_TOKEN_MESSENGER = fromEthereumAddress(
@@ -34,13 +60,25 @@ export class CCTPBridge extends EthereumBridge {
     "function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)",
   ]);
 
+  private static MESSAGE_TRANSMITTER_INTERFACE = new Interface([
+    "function receiveMessage(bytes message, bytes attestation)",
+  ]);
+
   private static readonly DUMMY_SN_ADDRESS = fromAddress(
     "0x0000000000000000000000000000000000000000000000000000000000000001"
   );
 
   private static readonly ZERO_ETH = Amount.fromRaw(0n, 18, "ETH");
 
-  private readonly cctpFees = CCTPFees.getInstance();
+  constructor(
+    bridgeToken: EthereumBridgeToken,
+    config: EthereumWalletConfig,
+    starknetWallet: WalletInterface,
+    logger: StarkZapLogger,
+    private readonly cctpFees: CCTPFees
+  ) {
+    super(bridgeToken, config, starknetWallet, logger);
+  }
 
   async deposit(
     recipient: Address,
@@ -109,7 +147,11 @@ export class CCTPBridge extends EthereumBridge {
           fastTransferBpFee: minimumFeeBps,
           ...approvalFeeData,
         };
-      } catch {
+      } catch (e) {
+        this.logger.debug(
+          "[CCTPBridge] getDepositFeeEstimate (L1 gas) failed:",
+          e
+        );
         return {
           l1Fee: defaultL1Fee,
           l1FeeError: FeeErrorCause.GENERIC_L1_FEE_ERROR,
@@ -118,6 +160,158 @@ export class CCTPBridge extends EthereumBridge {
           ...approvalFeeData,
         };
       }
+    }
+  }
+
+  override async initiateWithdraw(
+    recipient: EthereumAddress,
+    amount: Amount,
+    options?: InitiateBridgeWithdrawOptions
+  ): Promise<Tx> {
+    const { fastTransfer } = this.resolveCCTPInitiateOptions(options);
+    const calls = await this.buildInitiateWithdrawCalls(
+      recipient,
+      amount,
+      fastTransfer
+    );
+    return this.starknetWallet.execute(calls, options);
+  }
+
+  async getInitiateWithdrawFeeEstimate(
+    options?: InitiateBridgeWithdrawOptions
+  ): Promise<CCTPInitiateWithdrawFeeEstimation> {
+    const { fastTransfer } = this.resolveCCTPInitiateOptions(options);
+
+    const [calls, fastTransferBpFee] = await Promise.all([
+      this.buildInitiateWithdrawCalls(
+        fromEthereumAddress("0x0000000000000000000000000000000000000001", {
+          getAddress,
+        }),
+        await this.token.amount(1n),
+        fastTransfer
+      ),
+      this.cctpFees.getMinimumFeeBps(
+        BridgeDirection.WITHDRAW_FROM_STARKNET,
+        this.starknetWallet.getChainId(),
+        fastTransfer
+      ),
+    ]);
+
+    try {
+      const estimate = await this.starknetWallet.estimateFee(calls);
+      const isFri = estimate.unit === "FRI";
+      return {
+        l2Fee: Amount.fromRaw(estimate.overall_fee, 18, isFri ? "STRK" : "ETH"),
+        fastTransferBpFee,
+      };
+    } catch (e) {
+      this.logger.debug(
+        "[CCTPBridge] getInitiateWithdrawFeeEstimate (L2 fee) failed:",
+        e
+      );
+      return {
+        l2Fee: Amount.fromRaw(0n, 18, "STRK"),
+        l2FeeError: FeeErrorCause.GENERIC_L2_FEE_ERROR,
+        fastTransferBpFee,
+      };
+    }
+  }
+
+  /**
+   * @throws {Error} Message {@link CCTP_COMPLETE_WITHDRAW_OPTIONS_ERROR_MESSAGE}
+   *   when `options` is missing or not `{ protocol: "cctp", ... }` with attestation data.
+   */
+  async completeWithdraw(
+    _recipient: ExternalAddress,
+    _amount: Amount,
+    options?: CompleteBridgeWithdrawOptions
+  ): Promise<ExternalTransactionResponse> {
+    if (!options || options.protocol !== "cctp") {
+      throw new Error(CCTP_COMPLETE_WITHDRAW_OPTIONS_ERROR_MESSAGE);
+    }
+
+    const { attestation, message, expirationBlock, nonce } = options;
+
+    if (nonce && (await this.requiresReattestation(expirationBlock))) {
+      const result = await this.waitForReattestation(nonce);
+      if (
+        result.status === "complete" &&
+        result.attestation &&
+        result.message
+      ) {
+        return this.execute({
+          to: getMessageTransmitter(
+            this.starknetWallet.getChainId()
+          ).toString(),
+          data: CCTPBridge.MESSAGE_TRANSMITTER_INTERFACE.encodeFunctionData(
+            "receiveMessage",
+            [result.message, result.attestation]
+          ),
+        }).then((r) => ({ hash: r.hash }));
+      }
+      throw new Error("CCTP re-attestation failed. Try again later.");
+    }
+
+    const calldata =
+      CCTPBridge.MESSAGE_TRANSMITTER_INTERFACE.encodeFunctionData(
+        "receiveMessage",
+        [message, attestation]
+      );
+
+    const response = await this.execute({
+      to: getMessageTransmitter(this.starknetWallet.getChainId()).toString(),
+      data: calldata,
+    });
+
+    return { hash: response.hash };
+  }
+
+  /**
+   * @throws {Error} Message {@link CCTP_COMPLETE_WITHDRAW_OPTIONS_ERROR_MESSAGE}
+   *   when options are missing or not valid CCTP completion options (needed to simulate
+   *   `receiveMessage`).
+   */
+  async getCompleteWithdrawFeeEstimate(
+    _amount: Amount,
+    _recipient: ExternalAddress,
+    options?: CompleteBridgeWithdrawOptions
+  ): Promise<EthereumCompleteWithdrawFeeEstimation> {
+    if (options?.protocol !== "cctp") {
+      throw new Error(CCTP_COMPLETE_WITHDRAW_OPTIONS_ERROR_MESSAGE);
+    }
+
+    try {
+      const gasPrice = await this.getEthereumGasPrice();
+
+      const calldata =
+        CCTPBridge.MESSAGE_TRANSMITTER_INTERFACE.encodeFunctionData(
+          "receiveMessage",
+          [options.message, options.attestation]
+        );
+      try {
+        const gasUnits = await this.config.provider.estimateGas({
+          to: getMessageTransmitter(
+            this.starknetWallet.getChainId()
+          ).toString(),
+          data: calldata,
+        });
+        return { l1Fee: this.ethAmount(gasUnits * gasPrice) };
+      } catch {
+        // fall through to fallback
+      }
+
+      return {
+        l1Fee: this.ethAmount(FALLBACK_COMPLETE_WITHDRAW_GAS * gasPrice),
+      };
+    } catch (e) {
+      this.logger.debug(
+        "[CCTPBridge] getCompleteWithdrawFeeEstimate failed:",
+        e
+      );
+      return {
+        l1Fee: this.ethAmount(0n),
+        l1FeeError: FeeErrorCause.GENERIC_L1_FEE_ERROR,
+      };
     }
   }
 
@@ -136,6 +330,79 @@ export class CCTPBridge extends EthereumBridge {
 
   private usdcAmount(value: bigint): Amount {
     return Amount.fromRaw(value, 6, "USDC");
+  }
+
+  private async getL2Allowance(spender: Address): Promise<bigint> {
+    const result = await this.starknetWallet.callContract({
+      contractAddress: this.bridgeToken.starknetAddress.toString(),
+      entrypoint: "allowance",
+      calldata: [this.starknetWallet.address.toString(), spender.toString()],
+    });
+    return uint256.uint256ToBN({
+      low: result[0] ?? "0x0",
+      high: result[1] ?? "0x0",
+    });
+  }
+
+  private buildL2ApproveCall(spender: string, amount: Amount): Call {
+    return {
+      contractAddress: this.bridgeToken.starknetAddress.toString(),
+      entrypoint: "approve",
+      calldata: CallData.compile({
+        spender,
+        amount: uint256.bnToUint256(amount.toBase()),
+      }),
+    };
+  }
+
+  private async buildDepositForBurnCall(
+    recipient: EthereumAddress,
+    amount: Amount,
+    fastTransfer?: boolean
+  ): Promise<Call> {
+    const feeBps = await this.cctpFees.getMinimumFeeBps(
+      BridgeDirection.WITHDRAW_FROM_STARKNET,
+      this.starknetWallet.getChainId(),
+      fastTransfer
+    );
+    const maxFee = this.calculateMaxFee(amount, feeBps);
+
+    return {
+      contractAddress: getTokenMessenger(this.starknetWallet.getChainId()),
+      entrypoint: "deposit_for_burn",
+      calldata: CallData.compile({
+        amount: uint256.bnToUint256(amount.toBase()),
+        destination_domain: ETHEREUM_DOMAIN_ID,
+        mint_recipient: cairo.uint256(recipient.toString()),
+        burn_token: this.bridgeToken.starknetAddress.toString(),
+        destination_caller: cairo.uint256(EMPTY_DESTINATION_CALLER),
+        max_fee: uint256.bnToUint256(maxFee.toBase()),
+        min_finality_threshold: getFinalityThreshold(fastTransfer),
+      }),
+    };
+  }
+
+  private async buildInitiateWithdrawCalls(
+    recipient: EthereumAddress,
+    amount: Amount,
+    fastTransfer?: boolean
+  ): Promise<Call[]> {
+    const l2TokenMessenger = getTokenMessenger(
+      this.starknetWallet.getChainId()
+    );
+    const allowance = await this.getL2Allowance(l2TokenMessenger);
+
+    const calls: Call[] = [];
+
+    if (allowance < amount.toBase()) {
+      calls.push(this.buildL2ApproveCall(l2TokenMessenger, amount));
+    }
+
+    calls.push(
+      await this.buildDepositForBurnCall(recipient, amount, fastTransfer)
+    );
+
+    return calls;
   }
 
   private async createDepositForBurnTransaction(
@@ -180,5 +447,85 @@ export class CCTPBridge extends EthereumBridge {
     // Round up by adding (divisor - 1) before dividing
     const result = (numerator + divisor - 1n) / divisor;
     return this.usdcAmount(result);
+  }
+
+  private resolveCCTPInitiateOptions(
+    options?: InitiateBridgeWithdrawOptions
+  ): CCTPInitiateWithdrawBridgeOptions {
+    if (options && "protocol" in options) {
+      if (options.protocol !== "cctp") {
+        throw new Error(
+          "Only ExecuteOptions & CCTPInitiateWithdrawBridgeOptions are valid in a CCTP Bridge"
+        );
+      }
+      return options;
+    }
+    return { protocol: "cctp" };
+  }
+
+  private async waitForReattestation(nonce: string): Promise<{
+    status: "complete" | "failed";
+    attestation?: string;
+    message?: string;
+  }> {
+    const baseUrl = getCircleApiBaseUrl(this.starknetWallet.getChainId());
+
+    try {
+      await fetch(`${baseUrl}/v2/reattest/${nonce}`, {
+        method: "POST",
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      // might already be re-attested; ignore and proceed to poll
+    }
+
+    for (let i = 0; i < REATTESTATION_POLL_ATTEMPTS; i++) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, REATTESTATION_POLL_INTERVAL_MS)
+      );
+
+      try {
+        const response = await fetch(
+          `${baseUrl}/v2/messages/${STARKNET_DOMAIN_ID}?nonce=${nonce}`,
+          { signal: AbortSignal.timeout(10_000) }
+        );
+        if (!response.ok) continue;
+
+        const data = (await response.json()) as {
+          messages: {
+            status: string;
+            attestation: string;
+            message: string | null;
+          }[];
+        };
+
+        const msg = data.messages[0];
+        if (msg?.status === "complete" && msg.attestation !== "PENDING") {
+          return {
+            status: "complete",
+            attestation: msg.attestation,
+            ...(msg.message !== null && { message: msg.message }),
+          };
+        }
+      } catch {
+        // transient network error — retry
+      }
+    }
+
+    return { status: "failed" };
+  }
+
+  private async requiresReattestation(
+    expirationBlock?: number
+  ): Promise<boolean> {
+    if (!expirationBlock) {
+      return false;
+    }
+
+    const blockNumber = await this.config.provider.getBlockNumber();
+
+    return (
+      blockNumber >= expirationBlock - REATTESTATION_SAFETY_BLOCK_THRESHOLD
+    );
   }
 }

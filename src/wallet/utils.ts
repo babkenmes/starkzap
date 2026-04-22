@@ -12,9 +12,36 @@ import type { Address } from "@/types";
 import type {
   DeployOptions,
   EnsureReadyOptions,
+  FeeMode,
   PreflightOptions,
   PreflightResult,
 } from "@/types";
+
+/** Canonical (non-deprecated) fee mode variants. */
+export type NormalizedFeeMode =
+  | "user_pays"
+  | { type: "paymaster"; gasToken?: Address };
+
+/**
+ * Normalize FeeMode by converting the deprecated `"sponsored"` alias
+ * to its canonical `{ type: "paymaster" }` form.
+ */
+export function normalizeFeeMode(feeMode: FeeMode): NormalizedFeeMode {
+  if (feeMode === "sponsored") return { type: "paymaster" };
+  return feeMode;
+}
+
+/** Type guard: does this fee mode use the paymaster path? */
+export function isPaymasterMode(
+  feeMode: FeeMode | undefined
+): feeMode is { type: "paymaster"; gasToken?: Address } | "sponsored" {
+  return (
+    feeMode === "sponsored" ||
+    (typeof feeMode === "object" &&
+      feeMode !== null &&
+      feeMode.type === "paymaster")
+  );
+}
 
 /**
  * Shared wallet utilities.
@@ -86,7 +113,12 @@ export async function ensureWalletReady(
     }
 
     onProgress?.({ step: "DEPLOYING" });
-    const tx = await wallet.deploy(feeMode ? { feeMode } : undefined);
+    const deployOpts: DeployOptions = {
+      ...(feeMode && { feeMode }),
+    };
+    const tx = await wallet.deploy(
+      Object.keys(deployOpts).length > 0 ? deployOpts : undefined
+    );
     await tx.wait({
       successStates: [
         TransactionFinalityStatus.ACCEPTED_ON_L2,
@@ -120,7 +152,7 @@ export async function preflightTransaction(
   try {
     const deployed = await wallet.isDeployed();
     if (!deployed) {
-      if (feeMode === "sponsored") {
+      if (isPaymasterMode(feeMode)) {
         return { ok: true };
       }
       return { ok: false, reason: "Account not deployed" };
@@ -144,15 +176,20 @@ export async function preflightTransaction(
   }
 }
 
-/** Paymaster details for sponsored transactions */
-export function sponsoredDetails(
-  timeBounds?: PaymasterTimeBounds,
-  deploymentData?: PAYMASTER_API.ACCOUNT_DEPLOYMENT_DATA
-) {
+/** Build PaymasterDetails for sponsored or gasToken transactions. */
+export function paymasterDetails(options: {
+  feeMode: { type: "paymaster"; gasToken?: Address };
+  timeBounds?: PaymasterTimeBounds | undefined;
+  deploymentData?: PAYMASTER_API.ACCOUNT_DEPLOYMENT_DATA | undefined;
+}) {
+  const paymasterFeeMode = options.feeMode.gasToken
+    ? { mode: "default" as const, gasToken: options.feeMode.gasToken }
+    : { mode: "sponsored" as const };
+
   return {
-    feeMode: { mode: "sponsored" as const },
-    ...(timeBounds && { timeBounds }),
-    ...(deploymentData && { deploymentData }),
+    feeMode: paymasterFeeMode,
+    ...(options.timeBounds && { timeBounds: options.timeBounds }),
+    ...(options.deploymentData && { deploymentData: options.deploymentData }),
   };
 }
 

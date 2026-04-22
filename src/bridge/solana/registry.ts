@@ -1,6 +1,5 @@
 import type { ChainId, ChainIdLiteral, SolanaBridgeToken } from "@/types";
 import type { SolanaWalletConfig } from "@/bridge";
-import type { WalletInterface } from "@/wallet";
 import type { HyperlaneRuntime } from "@/bridge/solana/hyperlaneRuntime";
 import type {
   ChainMap,
@@ -10,6 +9,7 @@ import type {
   Token as HyperlaneToken,
   TokenStandard as HyperlaneTokenStandard,
 } from "@hyperlane-xyz/sdk";
+import { RpcProvider } from "starknet";
 
 type ChainMetadataWithMailbox = ChainMetadata & { mailbox?: string };
 
@@ -73,11 +73,11 @@ export function hyperlaneChainName(
 }
 
 export function setupMultiProtocolProvider(
-  config: SolanaWalletConfig,
-  starknetWallet: WalletInterface,
+  config: Pick<SolanaWalletConfig, "connection">,
+  chainId: ChainId,
+  starknetProvider: RpcProvider,
   hyperlane: HyperlaneRuntime
 ): MultiProtocolProvider {
-  const chainId = starknetWallet.getChainId();
   const chains = chainId.isMainnet()
     ? buildMainnetChainMap(hyperlane)
     : buildTestnetChainMap(hyperlane);
@@ -105,6 +105,32 @@ export function setupMultiProtocolProvider(
     hyperlaneChainName(chainId, "solana"),
     solanaProvider
   );
+
+  // Hyperlane bundles its own starknet.js 7.x which defaults to
+  // `block_id: "pending"` for contract calls. Modern Starknet RPC specs (v0_9+)
+  // removed "pending" in favour of "pre_confirmed", causing RPC errors.
+  // Override with a provider from our starknet.js 9.x (which defaults to
+  // "latest") built from the wallet's already-configured RPC URL, bypassing
+  // Hyperlane's bundled version entirely.
+  {
+    type StarknetTypedProvider = Extract<
+      Parameters<MultiProtocolProvider["setProvider"]>[1],
+      { type: HyperlaneProviderType.Starknet }
+    >;
+
+    const starknetTypedProvider: StarknetTypedProvider = {
+      type: ProviderType.Starknet as StarknetTypedProvider["type"],
+      // Double-cast required: Hyperlane's provider type is typed against its
+      // own starknet.js 7.x; at runtime the API is compatible.
+      provider:
+        starknetProvider as unknown as StarknetTypedProvider["provider"],
+    };
+
+    multiProvider.setProvider(
+      hyperlaneChainName(chainId, "starknet"),
+      starknetTypedProvider
+    );
+  }
 
   return multiProvider;
 }
