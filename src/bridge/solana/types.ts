@@ -28,4 +28,16 @@ export type HyperlaneFeeEstimate = {
   interchainFeeError?: FeeErrorCause;
 };
 
-export type SolanaDepositFeeEstimation = HyperlaneFeeEstimate;
+/** Fee estimation returned by the Solana LayerSwap bridge. */
+export type SolanaLayerSwapDepositFeeEstimation = {
+  /** Total fee charged by LayerSwap. */
+  totalFee: Amount;
+  /** Blockchain fee portion. */
+  blockchainFee: Amount;
+  /** LayerSwap service fee portion. */
+  serviceFee: Amount;
+  /** Amount the recipient will receive after fees. */
+  receiveAmount: Amount;
+  /** Estimated completion time (e.g. "00:02:00"). */
+  avgCompletionTime: string;
+};

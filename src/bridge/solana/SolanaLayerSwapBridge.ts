@@ -7,7 +7,10 @@ import type {
   LayerSwapApiConfig,
   LsDepositAction,
 } from "@/bridge/ethereum/layerswap/types";
-import type { SolanaWalletConfig } from "@/bridge/solana/types";
+import type {
+  SolanaLayerSwapDepositFeeEstimation,
+  SolanaWalletConfig,
+} from "@/bridge/solana/types";
 import {
   type Address,
   Amount,
@@ -17,19 +20,6 @@ import {
 } from "@/types";
 import type { WalletInterface } from "@/wallet";
 import { loadSolanaWeb3 } from "@/connect/solanaWeb3Runtime";
-
-export type SolanaLayerSwapDepositFeeEstimation = {
-  /** Total fee charged by LayerSwap. */
-  totalFee: Amount;
-  /** Blockchain fee portion. */
-  blockchainFee: Amount;
-  /** LayerSwap service fee portion. */
-  serviceFee: Amount;
-  /** Amount the recipient will receive after fees. */
-  receiveAmount: Amount;
-  /** Estimated completion time (e.g. "00:02:00"). */
-  avgCompletionTime: string;
-};
 
 /**
  * LayerSwap bridge provider for Solana → Starknet deposits.

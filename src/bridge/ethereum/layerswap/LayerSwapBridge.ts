@@ -6,8 +6,8 @@ import type {
   LsDepositAction,
 } from "@/bridge/ethereum/layerswap/types";
 import type {
-  EthereumDepositFeeEstimation,
   EthereumWalletConfig,
+  LayerSwapDepositFeeEstimation,
 } from "@/bridge/ethereum/types";
 import {
   type Address,
@@ -17,16 +17,6 @@ import {
   type ExternalTransactionResponse,
 } from "@/types";
 import type { WalletInterface } from "@/wallet";
-
-/** Fee estimation returned by LayerSwap, extending the base Ethereum fee shape. */
-export type LayerSwapDepositFeeEstimation = EthereumDepositFeeEstimation & {
-  /** LayerSwap service fee portion. */
-  serviceFee: Amount;
-  /** Amount the recipient will receive after fees. */
-  receiveAmount: Amount;
-  /** Estimated completion time (e.g. "00:02:00"). */
-  avgCompletionTime: string;
-};
 
 /**
  * LayerSwap bridge provider for cross-chain deposits via the LayerSwap API.
