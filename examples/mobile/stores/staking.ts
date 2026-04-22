@@ -4,6 +4,9 @@ import {
   sepoliaValidators,
   mainnetValidators,
   Amount,
+  getLSTConfig,
+  getSupportedLSTAssets,
+  type LSTConfig,
   type Validator,
   type PoolMember,
   type Pool,
@@ -16,14 +19,7 @@ import {
   showTransactionToast,
   updateTransactionToast,
 } from "@/components/Toast";
-
-/** Get explorer URL for a transaction hash */
-function getExplorerUrl(txHash: string, chainId: ChainId): string {
-  const baseUrl = chainId.isSepolia()
-    ? "https://sepolia.voyager.online/tx"
-    : "https://voyager.online/tx";
-  return `${baseUrl}/${txHash}`;
-}
+import { getExplorerUrl } from "@/utils";
 
 // Get validators for network
 export function getValidatorsForNetwork(
@@ -44,6 +40,8 @@ export interface StakingPosition {
   position: PoolMember | null;
   isMember: boolean;
   isLoading: boolean;
+  /** Set for Endur LST positions — routes actions via wallet.lstStaking(asset). */
+  lstAsset?: string;
 }
 
 /** Cached pools for a validator */
@@ -75,6 +73,15 @@ interface StakingState {
     validatorKey: string,
     validator: Validator,
     pool: Pool,
+    wallet: WalletInterface,
+    chainId: ChainId
+  ) => Promise<void>;
+  addLstPosition: (
+    asset: string,
+    wallet: WalletInterface,
+    chainId: ChainId
+  ) => Promise<void>;
+  discoverLstPositions: (
     wallet: WalletInterface,
     chainId: ChainId
   ) => Promise<void>;
@@ -114,9 +121,48 @@ interface StakingState {
   clearStaking: () => void;
 }
 
-/** Generate a unique key for a position */
+interface LstProbeHit {
+  config: LSTConfig;
+  position: PoolMember;
+}
+
 function makePositionKey(validatorKey: string, token: Token): string {
   return `${validatorKey}:${token.address}`;
+}
+
+function buildLstPositionEntry(
+  config: LSTConfig,
+  chainId: ChainId
+): StakingPosition {
+  const token: Token = {
+    name: config.symbol,
+    symbol: config.symbol,
+    address: config.assetAddress,
+    decimals: config.decimals,
+  };
+  const validator: Validator = {
+    name: `Endur (${config.lstSymbol})`,
+    stakerAddress: config.lstAddress,
+    logoUrl: null,
+  };
+  const pool: Pool = {
+    poolContract: config.lstAddress,
+    token,
+    amount: Amount.fromRaw(0n, token),
+  };
+  const validatorKey = `endur:${config.symbol}`;
+  return {
+    key: makePositionKey(validatorKey, token),
+    validatorKey,
+    validator,
+    token,
+    pool,
+    chainId,
+    position: null,
+    isMember: false,
+    isLoading: true,
+    lstAsset: config.symbol,
+  };
 }
 
 export const useStakingStore = create<StakingState>((set, get) => ({
@@ -195,6 +241,62 @@ export const useStakingStore = create<StakingState>((set, get) => ({
     }
   },
 
+  addLstPosition: async (asset, wallet, chainId) => {
+    const config = getLSTConfig(chainId, asset);
+    if (!config) {
+      Alert.alert("Unsupported", `No Endur LST for ${asset} on this network.`);
+      return;
+    }
+    const entry = buildLstPositionEntry(config, chainId);
+    if (get().positions[entry.key]) {
+      Alert.alert("Already added", `Endur ${config.symbol} is already listed.`);
+      return;
+    }
+    set((state) => ({
+      positions: { ...state.positions, [entry.key]: entry },
+    }));
+    await get().loadPosition(entry.key, wallet);
+  },
+
+  discoverLstPositions: async (wallet, chainId) => {
+    const assets = getSupportedLSTAssets(chainId);
+    const discovered = await Promise.all(
+      assets.map(async (asset): Promise<LstProbeHit | null> => {
+        const config = getLSTConfig(chainId, asset);
+        if (!config) return null;
+        try {
+          const poolMember = await wallet.lstStaking(asset).getPosition(wallet);
+          if (!poolMember || poolMember.staked.isZero()) return null;
+          return { config, position: poolMember };
+        } catch (err) {
+          console.warn(
+            `[LST] probe failed for ${asset} on ${chainId.toLiteral()}:`,
+            err
+          );
+          return null;
+        }
+      })
+    );
+    const hits = discovered.filter((d): d is LstProbeHit => d !== null);
+    if (hits.length === 0) return;
+    set((state) => {
+      const next: Record<string, StakingPosition> = { ...state.positions };
+      let mutated = false;
+      for (const hit of hits) {
+        const entry = buildLstPositionEntry(hit.config, chainId);
+        if (next[entry.key]) continue;
+        next[entry.key] = {
+          ...entry,
+          position: hit.position,
+          isMember: true,
+          isLoading: false,
+        };
+        mutated = true;
+      }
+      return mutated ? { positions: next } : state;
+    });
+  },
+
   removePosition: (key) => {
     set((state) => {
       const { [key]: _, ...rest } = state.positions;
@@ -218,11 +320,20 @@ export const useStakingStore = create<StakingState>((set, get) => ({
     }));
 
     try {
-      const poolAddress = positionData.pool.poolContract;
-      const [position, isMember] = await Promise.all([
-        wallet.getPoolPosition(poolAddress),
-        wallet.isPoolMember(poolAddress),
-      ]);
+      let position: PoolMember | null;
+      let isMember: boolean;
+      if (positionData.lstAsset) {
+        position = await wallet
+          .lstStaking(positionData.lstAsset)
+          .getPosition(wallet);
+        isMember = position !== null;
+      } else {
+        const poolAddress = positionData.pool.poolContract;
+        [position, isMember] = await Promise.all([
+          wallet.getPoolPosition(poolAddress),
+          wallet.isPoolMember(poolAddress),
+        ]);
+      }
 
       set((state) => ({
         positions: {
@@ -273,9 +384,9 @@ export const useStakingStore = create<StakingState>((set, get) => ({
 
     try {
       const amount = Amount.parse(amountStr, positionData.token);
-      const poolAddress = positionData.pool.poolContract;
-
-      const tx = await wallet.enterPool(poolAddress, amount);
+      const tx = positionData.lstAsset
+        ? await wallet.lstStaking(positionData.lstAsset).enter(wallet, amount)
+        : await wallet.enterPool(positionData.pool.poolContract, amount);
       addLog(`Stake tx submitted: ${tx.hash.slice(0, 10)}...`);
 
       // Show pending toast
@@ -321,9 +432,9 @@ export const useStakingStore = create<StakingState>((set, get) => ({
 
     try {
       const amount = Amount.parse(amountStr, positionData.token);
-      const poolAddress = positionData.pool.poolContract;
-
-      const tx = await wallet.addToPool(poolAddress, amount);
+      const tx = positionData.lstAsset
+        ? await wallet.lstStaking(positionData.lstAsset).add(wallet, amount)
+        : await wallet.addToPool(positionData.pool.poolContract, amount);
       addLog(`Add stake tx submitted: ${tx.hash.slice(0, 10)}...`);
 
       // Show pending toast
@@ -361,6 +472,17 @@ export const useStakingStore = create<StakingState>((set, get) => ({
   claimRewards: async (key, wallet, addLog) => {
     const positionData = get().positions[key];
     if (!positionData) return;
+
+    if (positionData.lstAsset) {
+      addLog(
+        `${positionData.token.symbol} LST yield accrues in the share price — use Exit / Exit Intent to realise it.`
+      );
+      Alert.alert(
+        "Not applicable",
+        "Endur LST yield is baked into the share price. Redeem shares via Exit or Exit Intent to realise gains."
+      );
+      return;
+    }
 
     set({ isClaimingRewards: true });
     addLog(
@@ -416,9 +538,11 @@ export const useStakingStore = create<StakingState>((set, get) => ({
 
     try {
       const amount = Amount.parse(amountStr, positionData.token);
-      const poolAddress = positionData.pool.poolContract;
-
-      const tx = await wallet.exitPoolIntent(poolAddress, amount);
+      const tx = positionData.lstAsset
+        ? await wallet
+            .lstStaking(positionData.lstAsset)
+            .exitIntent(wallet, amount)
+        : await wallet.exitPoolIntent(positionData.pool.poolContract, amount);
       addLog(`Exit intent tx submitted: ${tx.hash.slice(0, 10)}...`);
 
       // Show pending toast
@@ -463,9 +587,9 @@ export const useStakingStore = create<StakingState>((set, get) => ({
     );
 
     try {
-      const poolAddress = positionData.pool.poolContract;
-
-      const tx = await wallet.exitPool(poolAddress);
+      const tx = positionData.lstAsset
+        ? await wallet.lstStaking(positionData.lstAsset).exit(wallet)
+        : await wallet.exitPool(positionData.pool.poolContract);
       addLog(`Exit tx submitted: ${tx.hash.slice(0, 10)}...`);
 
       // Show pending toast
