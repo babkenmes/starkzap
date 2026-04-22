@@ -239,41 +239,37 @@ export class SolanaLayerSwapBridge implements BridgeInterface<SolanaAddress> {
       typeof solanaWeb3.Connection
     >;
     const fromPubkey = new solanaWeb3.PublicKey(this.config.address);
-    const toPubkey = new solanaWeb3.PublicKey(action.to_address);
-    const amountBase = BigInt(action.amount_in_base_units);
 
-    const isNativeSOL =
-      this.bridgeToken.address === "11111111111111111111111111111111";
-
-    const transaction = new solanaWeb3.Transaction();
-
-    if (isNativeSOL) {
-      transaction.add(
-        solanaWeb3.SystemProgram.transfer({
+    const transaction = action.call_data
+      ? solanaWeb3.Transaction.from(Buffer.from(action.call_data, "base64"))
+      : this.buildNativeTransfer(
+          solanaWeb3,
           fromPubkey,
-          toPubkey,
-          lamports: amountBase,
-        })
-      );
-    } else {
-      // SPL token transfer via memo-style: LayerSwap expects a
-      // simple transfer to the deposit address
-      const { getAssociatedTokenAddress, createTransferInstruction } =
-        await import("@solana/spl-token");
-      const tokenMint = new solanaWeb3.PublicKey(this.bridgeToken.address);
-
-      const sourceAta = await getAssociatedTokenAddress(tokenMint, fromPubkey);
-      const destAta = await getAssociatedTokenAddress(toPubkey, toPubkey, true);
-
-      transaction.add(
-        createTransferInstruction(sourceAta, destAta, fromPubkey, amountBase)
-      );
-    }
+          new solanaWeb3.PublicKey(action.to_address),
+          BigInt(action.amount_in_base_units)
+        );
 
     const { blockhash } = await connection.getLatestBlockhash();
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = fromPubkey;
 
     return await this.config.provider.signAndSendTransaction(transaction);
+  }
+
+  private buildNativeTransfer(
+    solanaWeb3: Awaited<ReturnType<typeof loadSolanaWeb3>>,
+    fromPubkey: InstanceType<
+      Awaited<ReturnType<typeof loadSolanaWeb3>>["PublicKey"]
+    >,
+    toPubkey: InstanceType<
+      Awaited<ReturnType<typeof loadSolanaWeb3>>["PublicKey"]
+    >,
+    lamports: bigint
+  ): InstanceType<Awaited<ReturnType<typeof loadSolanaWeb3>>["Transaction"]> {
+    const tx = new solanaWeb3.Transaction();
+    tx.add(
+      solanaWeb3.SystemProgram.transfer({ fromPubkey, toPubkey, lamports })
+    );
+    return tx;
   }
 }
