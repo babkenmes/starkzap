@@ -28,16 +28,6 @@ export type LayerSwapDepositFeeEstimation = EthereumDepositFeeEstimation & {
   avgCompletionTime: string;
 };
 
-const STARKNET_NETWORK_NAMES: Record<string, string> = {
-  SN_MAIN: "STARKNET_MAINNET",
-  SN_SEPOLIA: "STARKNET_SEPOLIA",
-};
-
-const ETHEREUM_NETWORK_NAMES: Record<string, string> = {
-  SN_MAIN: "ETHEREUM_MAINNET",
-  SN_SEPOLIA: "ETHEREUM_SEPOLIA",
-};
-
 /**
  * LayerSwap bridge provider for cross-chain deposits via the LayerSwap API.
  *
@@ -51,6 +41,8 @@ const ETHEREUM_NETWORK_NAMES: Record<string, string> = {
  */
 export class LayerSwapBridge extends EthereumBridge {
   private readonly api: LayerSwapApi;
+  private readonly sourceNetwork: string;
+  private readonly destNetwork: string;
 
   constructor(
     bridgeToken: EthereumBridgeToken,
@@ -61,6 +53,9 @@ export class LayerSwapBridge extends EthereumBridge {
   ) {
     super(bridgeToken, config, starknetWallet, []);
     this.api = new LayerSwapApi({ apiKey, ...apiConfig });
+    const mainnet = starknetWallet.getChainId().isMainnet();
+    this.sourceNetwork = mainnet ? "ETHEREUM_MAINNET" : "ETHEREUM_SEPOLIA";
+    this.destNetwork = mainnet ? "STARKNET_MAINNET" : "STARKNET_SEPOLIA";
   }
 
   async deposit(
@@ -68,67 +63,55 @@ export class LayerSwapBridge extends EthereumBridge {
     amount: Amount,
     _options?: BridgeDepositOptions
   ): Promise<ExternalTransactionResponse> {
-    const sourceNetwork = this.getSourceNetworkName();
-    const destNetwork = this.getDestNetworkName();
     const signerAddress = await this.config.signer.getAddress();
 
-    // 1. Create swap on LayerSwap (response includes deposit actions)
     const response = await this.api.createSwap({
-      sourceNetwork,
+      sourceNetwork: this.sourceNetwork,
       sourceToken: this.bridgeToken.symbol,
-      destinationNetwork: destNetwork,
+      destinationNetwork: this.destNetwork,
       destinationToken: this.bridgeToken.symbol,
-      amount: Number(amount.toUnit()),
+      amount: amount.toUnit(),
       destinationAddress: recipient,
       sourceAddress: signerAddress,
+      refundAddress: signerAddress,
     });
 
     const swap = response.swap;
 
-    // 2. Get deposit actions (from response or fetch separately if needed)
     const actions =
       response.deposit_actions.length > 0
         ? response.deposit_actions
         : await this.api.getDepositActions(swap.id, signerAddress);
-    const sourceActions = actions
-      .filter((a) => a.network.name === sourceNetwork)
-      .sort((a, b) => a.order - b.order);
+    const action = actions.find(
+      (a) => a.network.name === this.sourceNetwork && a.type === "transfer"
+    );
 
-    if (sourceActions.length === 0) {
+    if (!action) {
       throw new Error(
-        `No deposit actions found for swap "${swap.id}" on network "${sourceNetwork}".`
+        `No transfer deposit action for swap "${swap.id}" on network "${this.sourceNetwork}".`
       );
     }
 
-    // 3. Execute deposit actions on Ethereum
-    let lastHash = "";
-    for (const action of sourceActions) {
-      const response = await this.executeEvmDepositAction(action);
-      lastHash = response.hash;
-    }
+    const { hash } = await this.executeEvmDepositAction(action);
 
-    // 4. Speed up detection
     try {
-      await this.api.speedUpDeposit(swap.id, lastHash);
+      await this.api.speedUpDeposit(swap.id, hash);
     } catch {
       // Non-critical — LayerSwap will detect the deposit on its own.
     }
 
-    return { hash: lastHash };
+    return { hash };
   }
 
   async getDepositFeeEstimate(
     _options?: BridgeDepositOptions
   ): Promise<LayerSwapDepositFeeEstimation> {
-    const sourceNetwork = this.getSourceNetworkName();
-    const destNetwork = this.getDestNetworkName();
-
     const quote = await this.api.getQuote({
-      sourceNetwork,
+      sourceNetwork: this.sourceNetwork,
       sourceToken: this.bridgeToken.symbol,
-      destinationNetwork: destNetwork,
+      destinationNetwork: this.destNetwork,
       destinationToken: this.bridgeToken.symbol,
-      amount: 1,
+      amount: "0",
     });
 
     const decimals = this.bridgeToken.decimals;
@@ -177,28 +160,6 @@ export class LayerSwapBridge extends EthereumBridge {
   // Private helpers
   // ============================================================
 
-  private getSourceNetworkName(): string {
-    const literal = this.starknetWallet.getChainId().toLiteral();
-    const name = ETHEREUM_NETWORK_NAMES[literal];
-    if (!name) {
-      throw new Error(
-        `No LayerSwap Ethereum network mapping for Starknet chain "${literal}".`
-      );
-    }
-    return name;
-  }
-
-  private getDestNetworkName(): string {
-    const literal = this.starknetWallet.getChainId().toLiteral();
-    const name = STARKNET_NETWORK_NAMES[literal];
-    if (!name) {
-      throw new Error(
-        `No LayerSwap Starknet network mapping for chain "${literal}".`
-      );
-    }
-    return name;
-  }
-
   private async executeEvmDepositAction(
     action: LsDepositAction
   ): Promise<ExternalTransactionResponse> {
@@ -215,12 +176,6 @@ export class LayerSwapBridge extends EthereumBridge {
 
     if (action.call_data) {
       tx["data"] = action.call_data;
-      // For ERC20 token transfers, the amount is encoded in the calldata
-      // and msg.value should be 0. For native ETH, the value is still
-      // sent as msg.value alongside the calldata (swap reference ID).
-      if (action.type !== "transfer") {
-        tx["value"] = 0n;
-      }
     }
 
     if (action.gas_limit) {

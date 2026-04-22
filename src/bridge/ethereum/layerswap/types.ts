@@ -230,7 +230,7 @@ export interface LayerSwapQuoteRequest {
   readonly sourceToken: string;
   readonly destinationNetwork: string;
   readonly destinationToken: string;
-  readonly amount: number;
+  readonly amount: string | number;
   readonly refuel?: boolean;
   readonly slippage?: string;
   readonly sourceAddress?: string;
@@ -243,12 +243,14 @@ export interface LayerSwapCreateRequest {
   readonly sourceToken: string;
   readonly destinationNetwork: string;
   readonly destinationToken: string;
-  readonly amount: number;
+  readonly amount: string | number;
   readonly destinationAddress: string;
   readonly sourceAddress?: string;
+  readonly refundAddress?: string;
   readonly refuel?: boolean;
   readonly slippage?: string;
   readonly referenceId?: string;
+  readonly appName?: string;
   readonly useDepositAddress?: boolean;
   readonly useNewDepositAddress?: boolean;
   readonly sourceExchange?: string;

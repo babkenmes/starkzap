@@ -132,6 +132,7 @@ export class LayerSwapApi {
       amount: request.amount,
       destination_address: request.destinationAddress,
       ...(request.sourceAddress && { source_address: request.sourceAddress }),
+      ...(request.refundAddress && { refund_address: request.refundAddress }),
       refuel: request.refuel ?? false,
       use_deposit_address: request.useDepositAddress ?? false,
       ...(request.useNewDepositAddress != null && {
@@ -139,6 +140,7 @@ export class LayerSwapApi {
       }),
       ...(request.slippage && { slippage: request.slippage }),
       ...(request.referenceId && { reference_id: request.referenceId }),
+      ...(request.appName && { app_name: request.appName }),
       ...(request.sourceExchange && {
         source_exchange: request.sourceExchange,
       }),
