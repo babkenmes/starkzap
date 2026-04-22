@@ -9,9 +9,9 @@ import {
 } from "@/types";
 import { FeeErrorCause } from "@/types/errors";
 import type {
-  SolanaDepositFeeEstimation,
-  SolanaWithdrawFeeEstimation,
+  HyperlaneFeeEstimate,
   SolanaWalletConfig,
+  SolanaWithdrawFeeEstimation,
 } from "@/bridge/solana/types";
 import type { WalletInterface } from "@/wallet";
 import type { Tx } from "@/tx";
@@ -128,13 +128,13 @@ export class SolanaHyperlaneBridge implements BridgeInterface<SolanaAddress> {
     return { hash: lastSignature };
   }
 
-  async getDepositFeeEstimate(): Promise<SolanaDepositFeeEstimation> {
+  async getDepositFeeEstimate(): Promise<HyperlaneFeeEstimate> {
     const interchainResult = await this.estimateDepositInterchainFee();
     const localResult = await this.estimateDepositLocalFee(
       interchainResult.interchainFee
     );
 
-    const estimate: SolanaDepositFeeEstimation = {
+    const estimate: HyperlaneFeeEstimate = {
       localFee: this.solAmount(localResult.localFee.amount),
       interchainFee: this.solAmount(interchainResult.interchainFee.amount),
     };

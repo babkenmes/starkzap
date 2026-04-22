@@ -17,10 +17,14 @@ import {
   type EthereumInitiateWithdrawFeeEstimation,
   ExternalChain,
   Protocol,
-  type SolanaDepositFeeEstimation,
+  type SolanaAddress,
+  SolanaBridgeToken,
+  type HyperlaneFeeEstimate,
+  type SolanaLayerSwapDepositFeeEstimation,
   type SolanaProvider,
   type StarkZap,
   type WalletInterface,
+  fromAddress,
   DepositState,
   WithdrawalState,
   type WithdrawMonitorResult,
@@ -63,7 +67,8 @@ export interface BridgeState {
   allowanceLoading: boolean;
   feeEstimate:
     | EthereumDepositFeeEstimation
-    | SolanaDepositFeeEstimation
+    | HyperlaneFeeEstimate
+    | SolanaLayerSwapDepositFeeEstimation
     | BridgeInitiateWithdrawFeeEstimation
     | null;
   feeLoading: boolean;
@@ -190,6 +195,68 @@ export class BridgeController {
       this.fetchTokens();
     } catch (err) {
       this.log(`Failed to connect Ethereum wallet: ${err}`, "error");
+    }
+  }
+
+  /**
+   * Connect an Ethereum wallet directly from a private key (dev mode).
+   * Bypasses Reown/WalletConnect — useful for local testing.
+   */
+  async connectEthereumWalletFromKey(
+    privateKey: string,
+    rpcUrl: string,
+    chainId: number
+  ): Promise<void> {
+    try {
+      const { JsonRpcProvider, Wallet } = await import("ethers");
+      const provider = new JsonRpcProvider(rpcUrl, chainId);
+      const signer = new Wallet(privateKey, provider);
+      const address = await signer.getAddress();
+
+      // Create a minimal EIP-1193 provider wrapper for ConnectedEthereumWallet
+      const eip1193Provider = {
+        request: async (args: { method: string; params?: unknown[] }) => {
+          if (args.method === "eth_chainId") {
+            return `0x${chainId.toString(16)}`;
+          }
+          if (
+            args.method === "eth_accounts" ||
+            args.method === "eth_requestAccounts"
+          ) {
+            return [address];
+          }
+          return provider.send(args.method, args.params ?? []);
+        },
+      };
+
+      const wallet = await ConnectedEthereumWallet.from(
+        {
+          chain: ExternalChain.ETHEREUM,
+          provider: eip1193Provider,
+          address,
+          chainId: `0x${chainId.toString(16)}`,
+        },
+        this.chainId
+      );
+
+      // Patch the wallet config to use the private key signer directly
+      // (BrowserProvider from EIP-1193 won't have signing capability for raw keys)
+      const originalToConfig = wallet.toEthWalletConfig.bind(wallet);
+      wallet.toEthWalletConfig = async (ethereumRpcUrl?: string) => {
+        const config = await originalToConfig(ethereumRpcUrl);
+        // Replace the BrowserProvider signer with our direct Wallet signer
+        return { ...config, signer: signer as unknown as typeof config.signer };
+      };
+
+      this.state.connectedEthWallet = wallet;
+      this.log(
+        `Ethereum wallet connected (dev): ${address.slice(0, 6)}...${address.slice(-4)}`,
+        "success"
+      );
+      this.render();
+      this.fetchTokens();
+    } catch (err) {
+      this.log(`Failed to connect Ethereum wallet from key: ${err}`, "error");
     }
   }
 
@@ -322,6 +389,29 @@ export class BridgeController {
         chains.map((chain) => this.sdk.getBridgingTokens(chain))
       );
       const tokens = results.flat();
+
+      // Inject LayerSwap tokens until StarkGate API includes them
+      if (chains.includes(ExternalChain.ETHEREUM)) {
+        const hasEthLayerSwap = tokens.some(
+          (t) =>
+            t.protocol === Protocol.LAYERSWAP &&
+            t.chain === ExternalChain.ETHEREUM
+        );
+        if (!hasEthLayerSwap) {
+          tokens.push(...getEthereumLayerSwapTestTokens());
+        }
+      }
+      if (chains.includes(ExternalChain.SOLANA)) {
+        const hasSolLayerSwap = tokens.some(
+          (t) =>
+            t.protocol === Protocol.LAYERSWAP &&
+            t.chain === ExternalChain.SOLANA
+        );
+        if (!hasSolLayerSwap) {
+          tokens.push(...getSolanaLayerSwapTestTokens());
+        }
+      }
+
       this.state.tokens = tokens;
       this.state.tokensLoading = false;
       this.log(`Loaded ${tokens.length} bridge tokens`, "success");
@@ -822,7 +912,8 @@ export class BridgeController {
 
 type AnyFeeEstimate =
   | EthereumDepositFeeEstimation
-  | SolanaDepositFeeEstimation
+  | HyperlaneFeeEstimate
+  | SolanaLayerSwapDepositFeeEstimation
   | BridgeInitiateWithdrawFeeEstimation;
 
 function isEthereumDepositFee(
@@ -831,10 +922,16 @@ function isEthereumDepositFee(
   return "l1Fee" in estimate && "approvalFee" in estimate;
 }
 
-function isSolanaFee(
+function isSolanaLayerSwapFee(
   estimate: AnyFeeEstimate
-): estimate is SolanaDepositFeeEstimation {
-  return "localFee" in estimate;
+): estimate is SolanaLayerSwapDepositFeeEstimation {
+  return "serviceFee" in estimate && "avgCompletionTime" in estimate;
+}
+
+function isHyperlaneFee(
+  estimate: AnyFeeEstimate
+): estimate is HyperlaneFeeEstimate {
+  return "localFee" in estimate && "interchainFee" in estimate;
 }
 
 export function formatFeeEstimate(estimate: AnyFeeEstimate): string {
@@ -862,7 +959,12 @@ export function formatFeeEstimate(estimate: AnyFeeEstimate): string {
         `Fast Transfer Fee: ${(cctp.fastTransferBpFee / 100).toFixed(2)}%`
       );
     }
-  } else if (isSolanaFee(estimate)) {
+  } else if (isSolanaLayerSwapFee(estimate)) {
+    lines.push(`Blockchain Fee: ${estimate.blockchainFee.toFormatted(false)}`);
+    lines.push(`Service Fee: ${estimate.serviceFee.toFormatted(false)}`);
+    lines.push(`Receive: ${estimate.receiveAmount.toFormatted(false)}`);
+    lines.push(`Est. Time: ${estimate.avgCompletionTime}`);
+  } else if (isHyperlaneFee(estimate)) {
     lines.push(
       `Local Fee: ${estimate.localFee.toFormatted(false)}${
         estimate.localFeeError ? " (est.)" : ""
@@ -897,4 +999,57 @@ export function formatFeeEstimate(estimate: AnyFeeEstimate): string {
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Hardcoded LayerSwap tokens for testing until StarkGate API includes them.
+ * Remove this once StarkGate serves protocol:"layerswap" tokens.
+ */
+function getEthereumLayerSwapTestTokens(): EthereumBridgeToken[] {
+  return [
+    new EthereumBridgeToken({
+      id: "eth-layerswap",
+      name: "Ethereum (LayerSwap)",
+      symbol: "ETH",
+      decimals: 18,
+      protocol: Protocol.LAYERSWAP,
+      address: "0x0000000000000000000000000000000000000000" as EthereumAddress,
+      l1Bridge: "0x0000000000000000000000000000000000000000" as EthereumAddress,
+      starknetAddress: fromAddress(
+        "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7"
+      ),
+      starknetBridge: fromAddress("0x0"),
+    }),
+    new EthereumBridgeToken({
+      id: "usdc-layerswap",
+      name: "USDC (LayerSwap)",
+      symbol: "USDC",
+      decimals: 6,
+      protocol: Protocol.LAYERSWAP,
+      address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as EthereumAddress,
+      l1Bridge: "0x0000000000000000000000000000000000000000" as EthereumAddress,
+      starknetAddress: fromAddress(
+        "0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8"
+      ),
+      starknetBridge: fromAddress("0x0"),
+    }),
+  ];
+}
+
+function getSolanaLayerSwapTestTokens(): SolanaBridgeToken[] {
+  return [
+    new SolanaBridgeToken({
+      id: "usdc-solana-layerswap",
+      name: "USDC (Solana LayerSwap)",
+      symbol: "USDC",
+      decimals: 6,
+      protocol: Protocol.LAYERSWAP,
+      address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" as SolanaAddress,
+      l1Bridge: "11111111111111111111111111111111" as SolanaAddress,
+      starknetAddress: fromAddress(
+        "0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8"
+      ),
+      starknetBridge: fromAddress("0x0"),
+    }),
+  ];
 }

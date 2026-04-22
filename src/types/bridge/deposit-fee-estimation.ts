@@ -1,6 +1,10 @@
 import type { EthereumDepositFeeEstimation } from "@/bridge/ethereum";
-import type { SolanaDepositFeeEstimation } from "@/bridge/solana/types";
+import type {
+  HyperlaneFeeEstimate,
+  SolanaLayerSwapDepositFeeEstimation,
+} from "@/bridge/solana/types";
 
 export type BridgeDepositFeeEstimation =
   | EthereumDepositFeeEstimation
-  | SolanaDepositFeeEstimation;
+  | HyperlaneFeeEstimate
+  | SolanaLayerSwapDepositFeeEstimation;

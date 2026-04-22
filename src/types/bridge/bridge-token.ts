@@ -83,14 +83,15 @@ export class EthereumBridgeToken extends BridgeToken<EthereumAddress> {
 }
 
 export interface SolanaBridgeTokenParams extends BridgeTokenParams<SolanaAddress> {
-  protocol: Protocol.HYPERLANE;
+  protocol: SolanaBridgeProtocol;
 }
 
 export class SolanaBridgeToken extends BridgeToken<SolanaAddress> {
   readonly chain: ExternalChain = ExternalChain.SOLANA;
-  readonly protocol: SolanaBridgeProtocol = Protocol.HYPERLANE;
+  readonly protocol: SolanaBridgeProtocol;
 
   constructor(params: SolanaBridgeTokenParams) {
     super({ ...params });
+    this.protocol = params.protocol;
   }
 }

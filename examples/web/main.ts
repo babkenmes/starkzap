@@ -162,6 +162,12 @@ const SDK_CHAIN_ID =
 const OFT_PUBLIC_KEY = import.meta.env.VITE_OFT_PUBLIC_KEY as
   | string
   | undefined;
+const LAYERSWAP_API_KEY = import.meta.env.VITE_LAYERSWAP_API_KEY as
+  | string
+  | undefined;
+const LAYERSWAP_BASE_URL = import.meta.env.VITE_LAYERSWAP_BASE_URL as
+  | string
+  | undefined;
 const BPS_DENOMINATOR = 10_000n;
 const DEFAULT_SLIPPAGE_BPS = 100n;
 const DEFAULT_DCA_FREQUENCY = "P1D";
@@ -246,7 +252,7 @@ const sdk = new StarkZap({
   rpcUrl: RPC_URL,
   chainId: SDK_CHAIN_ID,
   logging: { logger: sdkLogger },
-  ...(ALCHEMY_API_KEY || OFT_PUBLIC_KEY
+  ...(ALCHEMY_API_KEY || OFT_PUBLIC_KEY || LAYERSWAP_API_KEY
     ? {
         bridging: {
           ...(ALCHEMY_API_KEY && {
@@ -260,6 +266,8 @@ const sdk = new StarkZap({
                 : undefined,
           }),
           ...(OFT_PUBLIC_KEY && { layerZeroApiKey: OFT_PUBLIC_KEY }),
+          ...(LAYERSWAP_API_KEY && { layerSwapApiKey: LAYERSWAP_API_KEY }),
+          ...(LAYERSWAP_BASE_URL && { layerSwapBaseUrl: LAYERSWAP_BASE_URL }),
         },
       }
     : {}),
@@ -520,14 +528,22 @@ const AUTO_PRIVATE_KEY = import.meta.env.VITE_PRIVATE_KEY as string | undefined;
 const AUTO_ACCOUNT_PRESET = import.meta.env.VITE_ACCOUNT_PRESET as
   | string
   | undefined;
+const AUTO_ETH_PRIVATE_KEY = import.meta.env.VITE_ETH_PRIVATE_KEY as
+  | string
+  | undefined;
 let appKit: ReturnType<typeof initializeAppKit> | null = null;
 let bridgeController: BridgeController | null = null;
 
-if (REOWN_PROJECT_ID) {
-  appKit = initializeAppKit(REOWN_PROJECT_ID);
+if (REOWN_PROJECT_ID || AUTO_ETH_PRIVATE_KEY) {
+  if (REOWN_PROJECT_ID) {
+    appKit = initializeAppKit(REOWN_PROJECT_ID);
+  }
   bridgeController = new BridgeController(sdk, SDK_CHAIN_ID, log, renderBridge);
 } else {
-  log("VITE_REOWN_PROJECT_ID not set - bridge disabled", "info");
+  log(
+    "VITE_REOWN_PROJECT_ID or VITE_ETH_PRIVATE_KEY not set - bridge disabled",
+    "info"
+  );
 }
 
 // Lending DOM elements
@@ -756,6 +772,8 @@ function formatProtocolTag(protocol: Protocol): string {
       return "[OFT Migrated]";
     case Protocol.HYPERLANE:
       return "[Hyperlane]";
+    case Protocol.LAYERSWAP:
+      return "[LayerSwap]";
     default:
       return `[${String(protocol)}]`;
   }
@@ -3192,6 +3210,23 @@ async function autoConnect(): Promise<void> {
   }
 }
 
+async function autoConnectEthereum(): Promise<void> {
+  if (!AUTO_ETH_PRIVATE_KEY || !bridgeController) return;
+
+  const ethRpcUrl =
+    NETWORK === "mainnet"
+      ? "https://eth.llamarpc.com"
+      : "https://rpc.sepolia.org";
+  const ethChainId = NETWORK === "mainnet" ? 1 : 11155111;
+
+  log(`Auto-connecting Ethereum wallet on ${NETWORK}...`, "info");
+  await bridgeController.connectEthereumWalletFromKey(
+    AUTO_ETH_PRIVATE_KEY,
+    ethRpcUrl,
+    ethChainId
+  );
+}
+
 // Tongo event listeners
 btnTongoInit.addEventListener("click", initializeConfidential);
 btnTongoFund.addEventListener("click", confidentialFund);
@@ -4467,4 +4502,4 @@ log(`SDK initialized on ${NETWORK} with RPC: ${RPC_URL}`, "info");
 if (REOWN_PROJECT_ID) {
   log("Bridge enabled (Reown AppKit)", "info");
 }
-autoConnect();
+autoConnect().then(() => autoConnectEthereum());

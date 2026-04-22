@@ -48,6 +48,16 @@ export type OftDepositFeeEstimation = EthereumDepositFeeEstimation & {
   interchainFee: Amount;
 };
 
+/** Fee estimation returned by LayerSwap, extending the base Ethereum fee shape. */
+export type LayerSwapDepositFeeEstimation = EthereumDepositFeeEstimation & {
+  /** LayerSwap service fee portion. */
+  serviceFee: Amount;
+  /** Amount the recipient will receive after fees. */
+  receiveAmount: Amount;
+  /** Estimated completion time (e.g. "00:02:00"). */
+  avgCompletionTime: string;
+};
+
 export type EthereumInitiateWithdrawFeeEstimation = {
   l2Fee: Amount;
   l2FeeError?: FeeErrorCause | undefined;
